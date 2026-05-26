@@ -2,7 +2,7 @@ import os
 
 DB_PATH = os.getenv("DB_PATH", "./data/wissensdatenbank.sqlite")
 UPLOAD_PATH = os.getenv("UPLOAD_PATH", "./data/uploads")
-EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 EMBEDDING_DIM = 384
 
 DEFAULT_SETTINGS: dict = {

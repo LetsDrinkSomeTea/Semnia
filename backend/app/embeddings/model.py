@@ -18,12 +18,12 @@ def load_model() -> TextEmbedding:
 
 
 def encode_query(text: str) -> np.ndarray:
-    result = list(load_model().embed([f"query: {text}"]))
+    result = list(load_model().embed([text]))
     return result[0].astype(np.float32)
 
 
 def encode_passage(text: str) -> np.ndarray:
-    result = list(load_model().embed([f"passage: {text}"]))
+    result = list(load_model().embed([text]))
     return result[0].astype(np.float32)
 
 
