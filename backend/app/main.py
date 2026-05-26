@@ -19,11 +19,40 @@ logging.basicConfig(level=logging.INFO)
 os.makedirs(os.getenv("UPLOAD_PATH", "./data/uploads"), exist_ok=True)
 
 
+def _enqueue_missing_embeddings() -> None:
+    """Queue every chunk that has no entry in chunks_vec yet."""
+    from app.db.models import Chunk
+    from app.db.session import SessionLocal
+    from app.embeddings.queue import enqueue_chunk
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        all_ids = [row[0] for row in db.query(Chunk.id).all()]
+        if not all_ids:
+            return
+        placeholders = ",".join(str(i) for i in all_ids)
+        already = {
+            row[0]
+            for row in db.execute(
+                text(f"SELECT rowid FROM chunks_vec WHERE rowid IN ({placeholders})")
+            ).fetchall()
+        }
+        missing = [i for i in all_ids if i not in already]
+        for cid in missing:
+            enqueue_chunk(cid)
+        if missing:
+            logging.info(f"Startup: enqueued {len(missing)} chunk(s) missing embeddings")
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     insert_seed_data()
     load_model()
+    _enqueue_missing_embeddings()
     task = asyncio.create_task(embedding_worker())
     yield
     task.cancel()
