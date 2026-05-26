@@ -1,0 +1,38 @@
+services:
+  backend:
+    image: ghcr.io/letsdrinksometea/semnia-backend:main
+    restart: unless-stopped
+    volumes:
+      - ./backend/app:/backend/app   # hot reload: mounts source over baked image
+      - data-dev:/data
+      - semnia-model-cache:/model-cache
+    environment:
+      - DB_PATH=/data/wissensdatenbank.sqlite
+      - UPLOAD_PATH=/data/uploads
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  frontend:
+    image: node:20-slim
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - frontend_nm:/app/node_modules  # named volume keeps node_modules across restarts
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_TARGET=http://backend:8000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  data-dev:
+  semnia-model-cache:
+  frontend_nm:
