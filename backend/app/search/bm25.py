@@ -2,6 +2,17 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
+def normalize_umlauts(text: str) -> str:
+    """Bidirectional umlaut normalization — ae↔ä, oe↔ö, ue↔ü, ss↔ß all collapse to ASCII form."""
+    return (
+        text.lower()
+        .replace('ä', 'ae')
+        .replace('ö', 'oe')
+        .replace('ü', 'ue')
+        .replace('ß', 'ss')
+    )
+
+
 def fts_search(
     db: Session,
     query: str,
@@ -60,9 +71,11 @@ def _apply_filters(
 
 
 def _escape_fts(query: str) -> str:
-    special = '"*(){}[]^-~'
-    cleaned = "".join(c for c in query if c not in special).strip()
-    words = [w for w in cleaned.split() if w]
+    import re
+    # Normalize umlauts so ae↔ä etc. match in both directions
+    # Split on non-alphanumeric chars so `-`, `.`, `+` etc. can't be misread as FTS5 operators
+    normalized = normalize_umlauts(query)
+    words = [w for w in re.split(r'\W+', normalized) if len(w) >= 3]
     if not words:
         return ""
-    return " ".join(f'"{w}"' for w in words)
+    return " ".join(words)

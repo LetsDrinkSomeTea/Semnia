@@ -29,6 +29,8 @@ export interface SearchResult {
   score: number
   tags: string[]
   call_count: number
+  matched_by?: 'semantic' | 'bm25' | 'both' | 'fuzzy'
+  matched_chunk_type?: 'question' | 'answer' | 'content'
 }
 
 export interface Tag {
@@ -41,9 +43,13 @@ export interface AppSettings {
   dupe_threshold: number
   top_k: number
   hybrid_alpha: number
+  chunk_size: number
+  chunk_overlap: number
+  branding_name: string
   branding_accent: string
   branding_font: string
   branding_logo_b64: string
+  branding_custom_css: string
   ollama_url: string
   ollama_model: string
 }
@@ -52,6 +58,7 @@ export interface ApiStatus {
   entry_count: number
   model: string
   model_ready: boolean
+  ollama_configured: boolean
   ollama_ready: boolean
 }
 

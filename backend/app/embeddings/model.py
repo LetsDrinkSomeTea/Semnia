@@ -13,7 +13,17 @@ def get_model() -> TextEmbedding | None:
 def load_model() -> TextEmbedding:
     global _model
     if _model is None:
-        _model = TextEmbedding(EMBEDDING_MODEL)
+        import logging
+        logging.info(f"Lade Embedding-Modell: {EMBEDDING_MODEL} …")
+        try:
+            _model = TextEmbedding(EMBEDDING_MODEL)
+        except ValueError:
+            supported = sorted(m["model"] for m in TextEmbedding.list_supported_models())
+            raise ValueError(
+                f"EMBEDDING_MODEL='{EMBEDDING_MODEL}' wird von fastembed nicht unterstützt.\n"
+                f"Unterstützte Modelle:\n" + "\n".join(f"  {m}" for m in supported)
+            )
+        logging.info(f"Embedding-Modell geladen: {EMBEDDING_MODEL}")
     return _model
 
 

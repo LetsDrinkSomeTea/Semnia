@@ -2,7 +2,7 @@ import json
 from sqlalchemy import text
 from app.db.session import Base, engine, SessionLocal
 from app.db.models import Entry, EntryTag, Chunk, Setting
-from app.config import DEFAULT_SETTINGS, EMBEDDING_DIM
+from app.config import DEFAULT_SETTINGS, SETTINGS_OVERRIDES
 
 
 SEED_QA = [
@@ -49,33 +49,150 @@ SEED_QA = [
 ]
 
 
-def init_db() -> None:
-    Base.metadata.create_all(bind=engine)
-    with engine.connect() as conn:
+def _get_schema_version(conn) -> int:
+    try:
+        row = conn.execute(text("SELECT value FROM settings WHERE key='db_schema_version'")).fetchone()
+        return int(json.loads(row[0])) if row else 0
+    except Exception:
+        return 0
+
+
+def _set_schema_version(conn, version: int) -> None:
+    conn.execute(
+        text("INSERT OR REPLACE INTO settings(key, value) VALUES ('db_schema_version', :v)"),
+        {"v": json.dumps(version)},
+    )
+    conn.commit()
+
+
+def _normalize(text: str) -> str:
+    """Local copy — avoids circular import from search.bm25 at migration time."""
+    return (
+        text.lower()
+        .replace('ä', 'ae')
+        .replace('ö', 'oe')
+        .replace('ü', 'ue')
+        .replace('ß', 'ss')
+    )
+
+
+def _run_migrations(conn) -> None:
+    ver = _get_schema_version(conn)
+
+    if ver < 1:
+        # Add chunk_type column (new installs already have it via create_all; this handles upgrades)
+        try:
+            conn.execute(text("ALTER TABLE chunks ADD COLUMN chunk_type TEXT NOT NULL DEFAULT 'content'"))
+        except Exception:
+            pass  # column already exists
+
+        # Drop old unicode61 FTS table and recreate with trigram tokenizer
+        conn.execute(text("DROP TABLE IF EXISTS entries_fts"))
         conn.execute(text("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+            CREATE VIRTUAL TABLE entries_fts USING fts5(
                 title, question, answer, content,
-                tokenize='unicode61 remove_diacritics 2'
-            )
-        """))
-        conn.execute(text(f"""
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
-                embedding float[{EMBEDDING_DIM}]
+                tokenize='trigram'
             )
         """))
         conn.commit()
 
+        # Re-populate FTS from entries (may be empty on fresh install)
+        try:
+            rows = conn.execute(
+                text("SELECT id, title, question, answer, content FROM entries")
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,:q,:a,:c)"),
+                    {"id": row[0], "t": row[1] or "", "q": row[2] or "", "a": row[3] or "", "c": row[4] or ""},
+                )
+            conn.commit()
+        except Exception:
+            pass
+
+        _set_schema_version(conn, 1)
+    if ver < 2:
+        # Migration 2: re-populate entries_fts with umlaut-normalized text
+        try:
+            rows = conn.execute(text("SELECT id, title, question, answer, content FROM entries")).fetchall()
+            conn.execute(text("DELETE FROM entries_fts"))
+            for row in rows:
+                conn.execute(
+                    text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,:q,:a,:c)"),
+                    {"id": row[0], "t": _normalize(row[1] or ""), "q": _normalize(row[2] or ""),
+                     "a": _normalize(row[3] or ""), "c": _normalize(row[4] or "")},
+                )
+            conn.commit()
+        except Exception:
+            pass
+        _set_schema_version(conn, 2)
+    else:
+        # Ensure FTS table exists (already trigram + normalized for ver >= 1)
+        conn.execute(text("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+                title, question, answer, content,
+                tokenize='trigram'
+            )
+        """))
+        conn.commit()
+
+
+def _get_chunks_vec_dim(conn) -> int | None:
+    import re as _re
+    row = conn.execute(text("SELECT sql FROM sqlite_master WHERE name='chunks_vec'")).fetchone()
+    if not row or not row[0]:
+        return None
+    m = _re.search(r'float\[(\d+)\]', row[0])
+    return int(m.group(1)) if m else None
+
+
+def _ensure_chunks_vec(conn, dim: int) -> None:
+    import logging as _log
+    existing = _get_chunks_vec_dim(conn)
+    if existing == dim:
+        conn.execute(text(f"CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(embedding float[{dim}])"))
+    else:
+        if existing is not None:
+            _log.warning(f"Embedding dimension changed {existing}→{dim}: dropping chunks_vec, all entries will be re-embedded.")
+        conn.execute(text("DROP TABLE IF EXISTS chunks_vec"))
+        conn.execute(text(f"CREATE VIRTUAL TABLE chunks_vec USING vec0(embedding float[{dim}])"))
+    conn.commit()
+
+
+def init_db(embedding_dim: int) -> None:
+    Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        _run_migrations(conn)
+        _ensure_chunks_vec(conn, embedding_dim)
+
     db = SessionLocal()
     try:
+        # Insert missing defaults
         for key, value in DEFAULT_SETTINGS.items():
             if not db.query(Setting).filter(Setting.key == key).first():
                 db.add(Setting(key=key, value=json.dumps(value)))
         db.commit()
+
+        # Apply env var overrides (always win on restart)
+        for key, value in SETTINGS_OVERRIDES.items():
+            row = db.query(Setting).filter(Setting.key == key).first()
+            if row:
+                row.value = json.dumps(value)
+            else:
+                db.add(Setting(key=key, value=json.dumps(value)))
+        if SETTINGS_OVERRIDES:
+            db.commit()
     finally:
         db.close()
 
 
 def insert_seed_data() -> None:
+    from app.config import DEMO
+    from app.import_.chunker import chunk_text
+
+    if not DEMO:
+        return
+
     db = SessionLocal()
     try:
         if db.query(Entry).count() > 0:
@@ -92,16 +209,31 @@ def insert_seed_data() -> None:
             db.flush()
             for tag in item["tags"]:
                 db.add(EntryTag(entry_id=entry.id, tag=tag))
-            chunk = Chunk(
+
+            # Question chunk
+            db.add(Chunk(
                 entry_id=entry.id,
                 chunk_index=0,
-                content=f"{item['question']} {item['answer']}",
-            )
-            db.add(chunk)
+                chunk_type="question",
+                content=item["question"],
+            ))
+
+            # Answer chunk(s)
+            answer_chunks = chunk_text(item["answer"])
+            if not answer_chunks:
+                answer_chunks = [item["answer"]]
+            for i, ac in enumerate(answer_chunks):
+                db.add(Chunk(
+                    entry_id=entry.id,
+                    chunk_index=i + 1,
+                    chunk_type="answer",
+                    content=ac,
+                ))
+
             db.flush()
             db.execute(
                 text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,:q,:a,'')"),
-                {"id": entry.id, "t": entry.title, "q": item["question"], "a": item["answer"]},
+                {"id": entry.id, "t": _normalize(entry.title), "q": _normalize(item["question"]), "a": _normalize(item["answer"])},
             )
         db.commit()
     finally:

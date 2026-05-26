@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app.config import EMBEDDING_MODEL
+from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE
 from app.db.init_db import init_db, insert_seed_data
 from app.db.session import get_db
 from app.embeddings.model import load_model
@@ -17,6 +17,53 @@ from app.routers import entries, search, tags, import_, settings
 logging.basicConfig(level=logging.INFO)
 
 os.makedirs(os.getenv("UPLOAD_PATH", "./data/uploads"), exist_ok=True)
+
+
+def _migrate_qa_chunks() -> None:
+    """Migrate Q&A entries from single combined chunk to separate question/answer chunks."""
+    from app.db.models import Chunk, Entry
+    from app.db.session import SessionLocal
+    from app.import_.chunker import chunk_text
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        old_chunks = (
+            db.query(Chunk)
+            .join(Entry, Chunk.entry_id == Entry.id)
+            .filter(Entry.entry_type == "qa", Chunk.chunk_type == "content")
+            .all()
+        )
+        entry_ids = list({c.entry_id for c in old_chunks})
+        if not entry_ids:
+            return
+
+        logging.info(f"Startup: migrating {len(entry_ids)} Q&A entries to separate question/answer chunks")
+
+        for entry_id in entry_ids:
+            entry = db.query(Entry).filter(Entry.id == entry_id).first()
+            if not entry:
+                continue
+            old = db.query(Chunk).filter(Chunk.entry_id == entry_id).all()
+            for c in old:
+                try:
+                    db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": c.id})
+                except Exception:
+                    pass
+                db.delete(c)
+            db.flush()
+
+            db.add(Chunk(entry_id=entry_id, chunk_index=0, chunk_type="question", content=entry.question or ""))
+            answer_chunks = chunk_text(entry.answer or "")
+            if not answer_chunks:
+                answer_chunks = [entry.answer or ""]
+            for i, ac in enumerate(answer_chunks):
+                db.add(Chunk(entry_id=entry_id, chunk_index=i + 1, chunk_type="answer", content=ac))
+
+        db.commit()
+        logging.info(f"Startup: Q&A migration complete for {len(entry_ids)} entries (embeddings queued by _enqueue_missing_embeddings)")
+    finally:
+        db.close()
 
 
 def _enqueue_missing_embeddings() -> None:
@@ -47,11 +94,24 @@ def _enqueue_missing_embeddings() -> None:
         db.close()
 
 
+def _resolve_embedding_dim() -> int:
+    if EMBEDDING_DIM_OVERRIDE is not None:
+        logging.info(f"Embedding dimension: {EMBEDDING_DIM_OVERRIDE} (from EMBEDDING_DIM env var)")
+        return EMBEDDING_DIM_OVERRIDE
+    from app.embeddings.model import get_model
+    test = list(get_model().embed(["x"]))[0]
+    dim = int(len(test))
+    logging.info(f"Embedding dimension: {dim} (auto-detected from {EMBEDDING_MODEL})")
+    return dim
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
-    insert_seed_data()
     load_model()
+    dim = _resolve_embedding_dim()
+    init_db(embedding_dim=dim)
+    insert_seed_data()
+    _migrate_qa_chunks()
     _enqueue_missing_embeddings()
     task = asyncio.create_task(embedding_worker())
     yield
@@ -62,7 +122,7 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="Wissensdatenbank", lifespan=lifespan)
+app = FastAPI(title="Semnia", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -87,19 +147,22 @@ async def api_status(db: Session = Depends(get_db)):
     entry_count = db.query(Entry).count()
 
     ollama_setting = db.query(Setting).filter(Setting.key == "ollama_url").first()
-    ollama_url = json.loads(ollama_setting.value) if ollama_setting else "http://ollama:11434"
+    ollama_url = json.loads(ollama_setting.value) if ollama_setting else ""
+    ollama_configured = bool(ollama_url and ollama_url.strip())
 
     ollama_ready = False
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get(f"{ollama_url}/api/tags")
-            ollama_ready = r.status_code == 200
-    except Exception:
-        pass
+    if ollama_configured:
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get(f"{ollama_url}/api/tags")
+                ollama_ready = r.status_code == 200
+        except Exception:
+            pass
 
     return {
         "entry_count": entry_count,
         "model": EMBEDDING_MODEL,
         "model_ready": get_model() is not None,
+        "ollama_configured": ollama_configured,
         "ollama_ready": ollama_ready,
     }

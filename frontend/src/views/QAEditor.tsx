@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getEntry, createQA, updateQA, checkDuplicate, listTags } from '../api/client'
+import { getEntry, createQA, updateQA, checkDuplicate, listTags, suggestTags } from '../api/client'
 import type { AppSettings, DupeCandidate } from '../types'
 import TagInput from '../components/TagInput'
 import DupeWarning from '../components/DupeWarning'
@@ -25,6 +25,7 @@ export default function QAEditor({ toast, settings }: Props) {
   const [dupes, setDupes] = useState<DupeCandidate[]>([])
   const [dupChecking, setDupChecking] = useState(false)
   const [hasChecked, setHasChecked] = useState(false)
+  const [suggestedTagList, setSuggestedTagList] = useState<string[]>([])
 
   const debouncedQ = useDebounce(question, 600)
   const debouncedA = useDebounce(answer, 600)
@@ -49,6 +50,7 @@ export default function QAEditor({ toast, settings }: Props) {
     if (!debouncedQ.trim() && !debouncedA.trim()) {
       setDupes([])
       setHasChecked(false)
+      setSuggestedTagList([])
       return
     }
     setDupChecking(true)
@@ -59,6 +61,9 @@ export default function QAEditor({ toast, settings }: Props) {
       })
       .catch(() => {})
       .finally(() => setDupChecking(false))
+
+    const text = [debouncedQ, debouncedA].filter(Boolean).join(' ')
+    suggestTags(text).then(setSuggestedTagList).catch(() => {})
   }, [debouncedQ, debouncedA, id])
 
   const handleSave = async () => {
@@ -136,7 +141,7 @@ export default function QAEditor({ toast, settings }: Props) {
 
           <div className="field">
             <label>Tags</label>
-            <TagInput tags={tags} onChange={setTags} suggestions={allTags} />
+            <TagInput tags={tags} onChange={setTags} suggestions={allTags} suggestedTags={suggestedTagList} />
           </div>
 
           <DupeWarning candidates={dupes} checking={dupChecking} hasContent={hasContent && hasChecked} />

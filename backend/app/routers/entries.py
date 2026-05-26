@@ -31,15 +31,16 @@ class DupeCheckRequest(BaseModel):
 
 
 def _sync_fts(db: Session, entry: Entry) -> None:
+    from app.search.bm25 import normalize_umlauts
     db.execute(text("DELETE FROM entries_fts WHERE rowid = :id"), {"id": entry.id})
     db.execute(
         text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,:q,:a,:c)"),
         {
             "id": entry.id,
-            "t": entry.title or "",
-            "q": entry.question or "",
-            "a": entry.answer or "",
-            "c": entry.content or "",
+            "t": normalize_umlauts(entry.title or ""),
+            "q": normalize_umlauts(entry.question or ""),
+            "a": normalize_umlauts(entry.answer or ""),
+            "c": normalize_umlauts(entry.content or ""),
         },
     )
 
@@ -51,6 +52,22 @@ def _delete_chunks_vec(db: Session, entry_id: int) -> None:
             db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": cid})
         except Exception:
             pass
+
+
+def _get_setting(db: Session, key: str, default):
+    row = db.query(Setting).filter(Setting.key == key).first()
+    return json.loads(row.value) if row else default
+
+
+def _create_qa_chunks(db: Session, entry_id: int, question: str, answer: str, chunk_size: int = 1500, chunk_overlap: int = 200) -> None:
+    from app.import_.chunker import chunk_text
+
+    db.add(Chunk(entry_id=entry_id, chunk_index=0, chunk_type="question", content=question))
+    answer_chunks = chunk_text(answer, max_chars=chunk_size, overlap_chars=chunk_overlap)
+    if not answer_chunks:
+        answer_chunks = [answer]
+    for i, ac in enumerate(answer_chunks):
+        db.add(Chunk(entry_id=entry_id, chunk_index=i + 1, chunk_type="answer", content=ac))
 
 
 def _to_dict(entry: Entry, related: list | None = None) -> dict:
@@ -202,11 +219,9 @@ def create_entry(payload: QACreate, db: Session = Depends(get_db)):
     db.flush()
     for tag in payload.tags:
         db.add(EntryTag(entry_id=entry.id, tag=tag))
-    db.add(Chunk(
-        entry_id=entry.id,
-        chunk_index=0,
-        content=f"{payload.question} {payload.answer}",
-    ))
+    chunk_size = _get_setting(db, "chunk_size", 1500)
+    chunk_overlap = _get_setting(db, "chunk_overlap", 200)
+    _create_qa_chunks(db, entry.id, payload.question, payload.answer, chunk_size, chunk_overlap)
     _sync_fts(db, entry)
     db.commit()
     enqueue_entry_chunks(entry.id)
@@ -230,12 +245,12 @@ def update_entry(entry_id: int, payload: QAUpdate, db: Session = Depends(get_db)
             db.add(EntryTag(entry_id=entry_id, tag=tag))
     entry.updated_at = datetime.utcnow()
 
-    chunk = db.query(Chunk).filter(Chunk.entry_id == entry_id, Chunk.chunk_index == 0).first()
-    new_content = f"{entry.question} {entry.answer}"
-    if chunk:
-        chunk.content = new_content
-    else:
-        db.add(Chunk(entry_id=entry_id, chunk_index=0, content=new_content))
+    # Replace all chunks with fresh question + answer chunks
+    _delete_chunks_vec(db, entry_id)
+    db.query(Chunk).filter(Chunk.entry_id == entry_id).delete()
+    chunk_size = _get_setting(db, "chunk_size", 1500)
+    chunk_overlap = _get_setting(db, "chunk_overlap", 200)
+    _create_qa_chunks(db, entry_id, entry.question or "", entry.answer or "", chunk_size, chunk_overlap)
 
     _sync_fts(db, entry)
     db.commit()

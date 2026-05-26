@@ -26,12 +26,13 @@ class EntryTag(Base):
 
 
 class Chunk(Base):
-    """Internal search index — one chunk per Q&A, N chunks per document."""
+    """Internal search index — one chunk per Q&A question, N chunks per answer/document."""
     __tablename__ = "chunks"
 
     id = Column(Integer, primary_key=True, index=True)
     entry_id = Column(Integer, ForeignKey("entries.id", ondelete="CASCADE"), nullable=False)
     chunk_index = Column(Integer, nullable=False, default=0)
+    chunk_type = Column(String, nullable=False, default='content')  # 'question'|'answer'|'content'
     content = Column(String, nullable=False)
 
 

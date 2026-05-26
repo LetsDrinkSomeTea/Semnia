@@ -29,6 +29,7 @@ const navItems = [
 function AppShell() {
   const { settings, loading } = useSettings()
   const [status, setStatus] = useState<ApiStatus | null>(null)
+  const [statusError, setStatusError] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
@@ -36,8 +37,12 @@ function AppShell() {
   useEffect(() => { setNavOpen(false) }, [location.pathname])
 
   useEffect(() => {
-    getStatus().then(setStatus).catch(() => {})
-    const t = setInterval(() => getStatus().then(setStatus).catch(() => {}), 30000)
+    const fetchStatus = () =>
+      getStatus()
+        .then(s => { setStatus(s); setStatusError(false) })
+        .catch(() => setStatusError(true))
+    fetchStatus()
+    const t = setInterval(fetchStatus, 30000)
     return () => clearInterval(t)
   }, [])
 
@@ -47,8 +52,10 @@ function AppShell() {
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 4000)
   }, [])
 
-  const pillClass = status?.model_ready ? 'model-pill ready' : 'model-pill loading'
+  const pillClass = statusError ? 'model-pill error' : status?.model_ready ? 'model-pill ready' : 'model-pill loading'
+  const pillTooltip = statusError ? 'Backend nicht erreichbar' : !status?.model_ready ? 'Modell wird geladen…' : undefined
   const ollamaReady = status?.ollama_ready ?? false
+  const shortModel = status?.model?.split('/').pop() ?? ''
 
   if (loading) return null
 
@@ -57,7 +64,11 @@ function AppShell() {
       <header className="pb-topbar">
         <NavLink to="/search" className="logo-wrap">
           <span className="logo-text">
-            Wissens<span className="accent">db</span>
+            {(() => {
+              const name = settings.branding_name || 'Semnia'
+              const cut = Math.max(0, name.length - 3)
+              return <>{name.slice(0, cut)}<span className="accent">{name.slice(cut)}</span></>
+            })()}
           </span>
         </NavLink>
         <div className="sep" />
@@ -76,10 +87,22 @@ function AppShell() {
         <div className="spacer" />
         <div className="right">
           {status && <span className="stats">{status.entry_count} Einträge</span>}
-          <button className={pillClass} title={status?.model ?? 'Modell'}>
+          <button
+            className={pillClass}
+            data-tooltip={pillTooltip}
+          >
             <span className="dot" />
-            <span className="pill-label">{status?.model_ready ? 'Bereit' : 'Lädt…'}</span>
+            <span className="pill-model">{statusError ? 'Offline' : (shortModel || '…')}</span>
           </button>
+          {status?.ollama_configured && (
+            <button
+              className={`model-pill ${status.ollama_ready ? 'ready' : 'loading'}`}
+              data-tooltip={!status.ollama_ready ? 'Nicht erreichbar' : undefined}
+            >
+              <span className="dot" />
+              {settings.ollama_model && <span className="pill-model">{settings.ollama_model}</span>}
+            </button>
+          )}
         </div>
         <button
           className={`mobile-menu-btn ${navOpen ? 'open' : ''}`}

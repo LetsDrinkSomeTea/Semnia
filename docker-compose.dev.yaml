@@ -9,6 +9,9 @@ services:
     environment:
       - DB_PATH=/data/wissensdatenbank.sqlite
       - UPLOAD_PATH=/data/uploads
+      - EMBEDDING_MODEL=intfloat/multilingual-e5-large
+      # - OLLAMA_URL=http://ollama:11434
+      # - OLLAMA_MODEL=llama3.2:1b
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
@@ -32,7 +35,18 @@ services:
       backend:
         condition: service_healthy
 
+  ollama:
+    image: ollama/ollama
+    restart: unless-stopped
+    volumes:
+      - ollama-dev:/root/.ollama
+    # Starts the server, then pulls the model on first run (cached in volume afterwards)
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 8 && ollama pull llama3.2:1b; wait"]
+    profiles:
+      - llm
+
 volumes:
   data-dev:
   semnia-model-cache:
   frontend_nm:
+  ollama-dev:

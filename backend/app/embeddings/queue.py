@@ -43,8 +43,13 @@ def _embed_chunk(chunk_id: int) -> None:
         if not chunk or not chunk.content.strip():
             return
         emb = encode_passage(chunk.content)
+        # vec0 doesn't support INSERT OR REPLACE; delete first to be idempotent
+        try:
+            db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": chunk_id})
+        except Exception:
+            pass
         db.execute(
-            text("INSERT OR REPLACE INTO chunks_vec(rowid, embedding) VALUES (:id, :emb)"),
+            text("INSERT INTO chunks_vec(rowid, embedding) VALUES (:id, :emb)"),
             {"id": chunk_id, "emb": to_bytes(emb)},
         )
         db.commit()

@@ -34,7 +34,6 @@ export default function Settings({ toast }: Props) {
     setReindexing(true)
     try {
       const r = await reindex()
-      // consume SSE stream
       const reader = r.body?.getReader()
       if (reader) {
         while (true) {
@@ -66,10 +65,12 @@ export default function Settings({ toast }: Props) {
 
   const Slider = ({
     label,
+    envVar,
     settKey,
     description,
   }: {
     label: string
+    envVar: string
     settKey: 'search_threshold' | 'dupe_threshold' | 'hybrid_alpha'
     description: string
   }) => {
@@ -77,18 +78,14 @@ export default function Settings({ toast }: Props) {
     const pct = `${Math.round(v * 100)}%`
     return (
       <div className="setting">
-        <h6>{label}</h6>
+        <h6>{label} <code className="env-tag">{envVar}</code></h6>
         <div className="val">{v.toFixed(2)}</div>
-        <div
-          className="threshold-slider"
-          style={{ '--p': pct } as React.CSSProperties}
-        >
+        <div className="threshold-slider" style={{ '--p': pct } as React.CSSProperties}>
           <div
             className="track"
             onClick={(e) => {
               const rect = e.currentTarget.getBoundingClientRect()
-              const newVal = Math.round(((e.clientX - rect.left) / rect.width) * 100) / 100
-              set(settKey, newVal as AppSettings[typeof settKey])
+              set(settKey, Math.round(((e.clientX - rect.left) / rect.width) * 100) / 100 as AppSettings[typeof settKey])
             }}
           >
             <div className="fill" />
@@ -112,13 +109,11 @@ export default function Settings({ toast }: Props) {
       <div className="page-head">
         <div>
           <h1 className="page-h">Einstellungen</h1>
-          <p className="page-sub">Suche, Schwellenwerte und Systemverwaltung.</p>
+          <p className="page-sub">Laufzeitkonfiguration. Env-vars (siehe <code>.env.example</code>) werden beim Neustart angewendet.</p>
         </div>
         <div className="action-row">
           {Object.keys(local).length > 0 && (
-            <button className="btn" onClick={save}>
-              Speichern
-            </button>
+            <button className="btn" onClick={save}>Speichern</button>
           )}
         </div>
       </div>
@@ -128,21 +123,24 @@ export default function Settings({ toast }: Props) {
         <div className="settings-grid">
           <Slider
             label="Ähnlichkeitsschwelle"
+            envVar="SEARCH_THRESHOLD"
             settKey="search_threshold"
             description="Minimum-Score für Suchergebnisse (0 = alles, 1 = nur exakt)"
           />
           <Slider
             label="Duplikat-Schwelle"
+            envVar="DUPE_THRESHOLD"
             settKey="dupe_threshold"
             description="Ab wann ein Eintrag im Editor als Duplikat gewarnt wird"
           />
           <Slider
             label="Hybrid-Alpha (α)"
+            envVar="HYBRID_ALPHA"
             settKey="hybrid_alpha"
-            description="Gewichtung Semantik vs. BM25 (1 = rein semantisch)"
+            description="Gewichtung Semantik vs. Volltext (1 = rein semantisch, 0 = rein Volltext)"
           />
           <div className="setting">
-            <h6>Top-K Ergebnisse</h6>
+            <h6>Top-K Ergebnisse <code className="env-tag">TOP_K</code></h6>
             <div className="stepper">
               <button onClick={() => set('top_k', Math.max(1, (val('top_k') as number) - 1))}>−</button>
               <span className="v">{val('top_k')}</span>
@@ -150,12 +148,30 @@ export default function Settings({ toast }: Props) {
             </div>
             <small>Maximale Anzahl Suchergebnisse</small>
           </div>
+          <div className="setting">
+            <h6>Chunk-Größe (Zeichen) <code className="env-tag">CHUNK_SIZE</code></h6>
+            <div className="stepper">
+              <button onClick={() => set('chunk_size', Math.max(200, (val('chunk_size') as number) - 100))}>−</button>
+              <span className="v">{val('chunk_size')}</span>
+              <button onClick={() => set('chunk_size', Math.min(5000, (val('chunk_size') as number) + 100))}>+</button>
+            </div>
+            <small>Maximale Chunk-Länge bei Antworten und Dokumenten (nach Reindex aktiv)</small>
+          </div>
+          <div className="setting">
+            <h6>Chunk-Überlappung (Zeichen) <code className="env-tag">CHUNK_OVERLAP</code></h6>
+            <div className="stepper">
+              <button onClick={() => set('chunk_overlap', Math.max(0, (val('chunk_overlap') as number) - 50))}>−</button>
+              <span className="v">{val('chunk_overlap')}</span>
+              <button onClick={() => set('chunk_overlap', Math.min(1000, (val('chunk_overlap') as number) + 50))}>+</button>
+            </div>
+            <small>Überlappung zwischen aufeinanderfolgenden Chunks (nach Reindex aktiv)</small>
+          </div>
         </div>
 
-        <h3>Ollama (KI-Zusammenfassung)</h3>
+        <h3>Ollama <span style={{ fontWeight: 400, fontSize: 13, color: 'var(--primary--500)' }}>(KI-Zusammenfassung)</span></h3>
         <div className="settings-grid">
           <div className="setting">
-            <h6>Ollama URL</h6>
+            <h6>Ollama URL <code className="env-tag">OLLAMA_URL</code></h6>
             <input
               className="txt"
               value={val('ollama_url') as string}
@@ -165,7 +181,7 @@ export default function Settings({ toast }: Props) {
             <small>Leer lassen, wenn Ollama nicht verwendet wird</small>
           </div>
           <div className="setting">
-            <h6>Modell</h6>
+            <h6>Modell <code className="env-tag">OLLAMA_MODEL</code></h6>
             <input
               className="txt"
               value={val('ollama_model') as string}
@@ -173,38 +189,6 @@ export default function Settings({ toast }: Props) {
               placeholder="llama3.2:3b"
             />
             <small>Muss auf dem Ollama-Server verfügbar sein</small>
-          </div>
-        </div>
-
-        <h3>Branding</h3>
-        <div className="settings-grid">
-          <div className="setting">
-            <h6>Akzentfarbe</h6>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
-              <input
-                type="color"
-                value={val('branding_accent') as string}
-                onChange={(e) => set('branding_accent', e.target.value)}
-                style={{ width: 40, height: 40, border: '1px solid var(--primary--200)', cursor: 'pointer' }}
-              />
-              <input
-                className="txt"
-                value={val('branding_accent') as string}
-                onChange={(e) => set('branding_accent', e.target.value)}
-                style={{ fontFamily: 'var(--font-mono)', fontSize: 13, flex: 1 }}
-              />
-            </div>
-            <small>Wird sofort angewendet (CSS-Variable --base--action)</small>
-          </div>
-          <div className="setting">
-            <h6>Schriftart (Font-Stack)</h6>
-            <input
-              className="txt"
-              value={val('branding_font') as string}
-              onChange={(e) => set('branding_font', e.target.value)}
-              placeholder="Inter, system-ui, sans-serif"
-            />
-            <small>CSS font-family-Wert für Body und Überschriften</small>
           </div>
         </div>
 
