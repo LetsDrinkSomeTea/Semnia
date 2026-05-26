@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { getEntry, createQA, updateQA, checkDuplicate, listTags } from '../api/client'
 import type { AppSettings, DupeCandidate } from '../types'
@@ -24,9 +24,10 @@ export default function QAEditor({ toast, settings }: Props) {
   const [loaded, setLoaded] = useState(isNew)
   const [dupes, setDupes] = useState<DupeCandidate[]>([])
   const [dupChecking, setDupChecking] = useState(false)
+  const [hasChecked, setHasChecked] = useState(false)
 
-  const debouncedQ = useDebounce(question, 500)
-  const debouncedA = useDebounce(answer, 500)
+  const debouncedQ = useDebounce(question, 600)
+  const debouncedA = useDebounce(answer, 600)
 
   useEffect(() => {
     listTags().then((ts) => setAllTags(ts.map((t) => t.name))).catch(() => {})
@@ -44,14 +45,17 @@ export default function QAEditor({ toast, settings }: Props) {
       .catch(() => { toast('Eintrag nicht gefunden', 'error'); navigate('/browse') })
   }, [id])
 
-  // Live duplicate check
   useEffect(() => {
-    if (!debouncedQ.trim() && !debouncedA.trim()) { setDupes([]); return }
+    if (!debouncedQ.trim() && !debouncedA.trim()) {
+      setDupes([])
+      setHasChecked(false)
+      return
+    }
     setDupChecking(true)
     checkDuplicate(debouncedQ, debouncedA)
       .then((results) => {
-        // Exclude self
         setDupes(results.filter((d) => d.id !== Number(id)))
+        setHasChecked(true)
       })
       .catch(() => {})
       .finally(() => setDupChecking(false))
@@ -67,15 +71,11 @@ export default function QAEditor({ toast, settings }: Props) {
         saved = await createQA({ question: question.trim(), answer: answer.trim(), tags })
         toast('Eintrag angelegt.', 'success')
       } else {
-        saved = await updateQA(Number(id), {
-          question: question.trim(),
-          answer: answer.trim(),
-          tags,
-        })
+        saved = await updateQA(Number(id), { question: question.trim(), answer: answer.trim(), tags })
         toast('Eintrag aktualisiert.', 'success')
       }
       navigate(`/entries/${saved.id}`)
-    } catch (e) {
+    } catch {
       toast('Speichern fehlgeschlagen.', 'error')
     } finally {
       setSaving(false)
@@ -90,6 +90,8 @@ export default function QAEditor({ toast, settings }: Props) {
 
   if (!loaded) return <main className="pb-main"><div className="empty"><p>Lädt…</p></div></main>
 
+  const hasContent = debouncedQ.trim().length > 5 || debouncedA.trim().length > 5
+
   return (
     <main className="pb-main">
       <div className="page-head">
@@ -97,14 +99,12 @@ export default function QAEditor({ toast, settings }: Props) {
           <h1 className="page-h">{isNew ? 'Neuer Eintrag' : 'Eintrag bearbeiten'}</h1>
           <p className="page-sub">
             {isNew
-              ? 'Frage und Antwort eingeben — das System prüft live, ob ähnliche Einträge bestehen.'
+              ? 'Frage und Antwort eingeben — das System prüft live auf ähnliche Einträge.'
               : 'Änderungen werden nach dem Speichern neu eingebettet.'}
           </p>
         </div>
         <div className="action-row">
-          <button className="btn btn--ghost" onClick={handleCancel}>
-            Abbrechen
-          </button>
+          <button className="btn btn--ghost" onClick={handleCancel}>Abbrechen</button>
           <button className="btn" onClick={handleSave} disabled={saving}>
             {saving ? 'Speichert…' : 'Speichern'}
           </button>
@@ -138,10 +138,11 @@ export default function QAEditor({ toast, settings }: Props) {
             <label>Tags</label>
             <TagInput tags={tags} onChange={setTags} suggestions={allTags} />
           </div>
+
+          <DupeWarning candidates={dupes} checking={dupChecking} hasContent={hasContent && hasChecked} />
         </div>
 
         <div className="editor-side">
-          <DupeWarning candidates={dupes} checking={dupChecking} />
           <div className="aside-card">
             <h4>Tipps</h4>
             <p>Verwende eine klare, konkrete Frage. Die Suche findet auch ähnlich formulierte Anfragen.</p>

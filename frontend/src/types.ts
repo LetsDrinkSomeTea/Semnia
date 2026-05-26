@@ -52,6 +52,7 @@ export interface ApiStatus {
   entry_count: number
   model: string
   model_ready: boolean
+  ollama_ready: boolean
 }
 
 export interface ImportItem {

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -6,6 +7,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from app.config import EMBEDDING_MODEL
 from app.db.init_db import init_db, insert_seed_data
 from app.db.session import get_db
 from app.embeddings.model import load_model
@@ -48,12 +50,27 @@ app.include_router(settings.router)
 
 
 @app.get("/api/status")
-def api_status(db: Session = Depends(get_db)):
-    from app.db.models import Entry
+async def api_status(db: Session = Depends(get_db)):
+    import httpx
+    from app.db.models import Entry, Setting
     from app.embeddings.model import get_model
+
     entry_count = db.query(Entry).count()
+
+    ollama_setting = db.query(Setting).filter(Setting.key == "ollama_url").first()
+    ollama_url = json.loads(ollama_setting.value) if ollama_setting else "http://ollama:11434"
+
+    ollama_ready = False
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get(f"{ollama_url}/api/tags")
+            ollama_ready = r.status_code == 200
+    except Exception:
+        pass
+
     return {
         "entry_count": entry_count,
-        "model": "intfloat/multilingual-e5-small",
+        "model": EMBEDDING_MODEL,
         "model_ready": get_model() is not None,
+        "ollama_ready": ollama_ready,
     }

@@ -18,11 +18,22 @@ interface Toast {
 
 let toastId = 0
 
+const navItems = [
+  { to: '/search', label: 'Suche' },
+  { to: '/browse', label: 'Übersicht' },
+  { to: '/editor/new', label: 'Neu' },
+  { to: '/import', label: 'Import' },
+  { to: '/settings', label: 'Einstellungen' },
+]
+
 function AppShell() {
   const { settings, loading } = useSettings()
   const [status, setStatus] = useState<ApiStatus | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
+
+  useEffect(() => { setNavOpen(false) }, [location.pathname])
 
   useEffect(() => {
     getStatus().then(setStatus).catch(() => {})
@@ -37,6 +48,7 @@ function AppShell() {
   }, [])
 
   const pillClass = status?.model_ready ? 'model-pill ready' : 'model-pill loading'
+  const ollamaReady = status?.ollama_ready ?? false
 
   if (loading) return null
 
@@ -49,18 +61,13 @@ function AppShell() {
           </span>
         </NavLink>
         <div className="sep" />
-        <nav className="nav">
-          {[
-            { to: '/search', label: 'Suche' },
-            { to: '/browse', label: 'Übersicht' },
-            { to: '/editor/new', label: 'Neu' },
-            { to: '/import', label: 'Import' },
-            { to: '/settings', label: 'Einstellungen' },
-          ].map(({ to, label }) => (
+        <nav className={`nav ${navOpen ? 'open' : ''}`}>
+          {navItems.map(({ to, label }) => (
             <NavLink
               key={to}
               to={to}
               className={({ isActive }) => (isActive ? 'on' : '')}
+              onClick={() => setNavOpen(false)}
             >
               {label}
             </NavLink>
@@ -68,25 +75,34 @@ function AppShell() {
         </nav>
         <div className="spacer" />
         <div className="right">
-          {status && (
-            <span className="stats">{status.entry_count} Einträge</span>
-          )}
+          {status && <span className="stats">{status.entry_count} Einträge</span>}
           <button className={pillClass} title={status?.model ?? 'Modell'}>
             <span className="dot" />
-            {status?.model ?? 'Modell'}
+            <span className="pill-label">{status?.model_ready ? 'Bereit' : 'Lädt…'}</span>
           </button>
         </div>
+        <button
+          className={`mobile-menu-btn ${navOpen ? 'open' : ''}`}
+          onClick={() => setNavOpen((o) => !o)}
+          aria-label="Navigation öffnen"
+        >
+          <span />
+          <span />
+          <span />
+        </button>
       </header>
 
+      {navOpen && <div className="nav-overlay" onClick={() => setNavOpen(false)} />}
+
       <Routes>
-        <Route path="/search" element={<Search toast={toast} settings={settings} />} />
+        <Route path="/search" element={<Search toast={toast} settings={settings} ollamaReady={ollamaReady} />} />
         <Route path="/browse" element={<Browse toast={toast} />} />
         <Route path="/entries/:id" element={<Detail toast={toast} />} />
         <Route path="/editor/new" element={<QAEditor toast={toast} settings={settings} />} />
         <Route path="/editor/:id" element={<QAEditor toast={toast} settings={settings} />} />
         <Route path="/import" element={<Import toast={toast} />} />
         <Route path="/settings" element={<Settings toast={toast} />} />
-        <Route path="*" element={<Search toast={toast} settings={settings} />} />
+        <Route path="*" element={<Search toast={toast} settings={settings} ollamaReady={ollamaReady} />} />
       </Routes>
 
       <div className="toast-stack">

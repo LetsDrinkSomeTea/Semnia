@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { getEntry, deleteEntry } from '../api/client'
 import type { Entry } from '../types'
 import EntryTypeBadge from '../components/EntryTypeBadge'
+import EntryRow from '../components/EntryRow'
 
 interface Props {
   toast: (msg: string, kind?: 'success' | 'error' | 'info') => void
@@ -36,9 +37,7 @@ export default function Detail({ toast }: Props) {
 
   return (
     <main className="pb-main">
-      <button className="detail-back" onClick={() => navigate(-1)}>
-        ← Zurück
-      </button>
+      <button className="detail-back" onClick={() => navigate(-1)}>← Zurück</button>
 
       <div className="detail">
         <div>
@@ -97,26 +96,14 @@ export default function Detail({ toast }: Props) {
       {entry.related && entry.related.length > 0 && (
         <div className="related">
           <h4>Verwandte Einträge</h4>
-          <div className="related-list">
+          <div className="entry-list">
             {entry.related.map((r) => (
-              <div
+              <EntryRow
                 key={r.id}
-                className="related-row"
+                title={r.title}
+                entry_type={r.entry_type}
                 onClick={() => navigate(`/entries/${r.id}`)}
-                role="button"
-              >
-                <div>
-                  <div className="q">{r.title}</div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                    {r.tags.map((t) => (
-                      <span key={t} style={{ fontSize: 10, color: 'var(--primary--500)' }}>
-                        {t}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <EntryTypeBadge type={r.entry_type} />
-              </div>
+              />
             ))}
           </div>
         </div>
