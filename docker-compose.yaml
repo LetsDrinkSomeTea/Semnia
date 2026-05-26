@@ -1,9 +1,7 @@
-# Production — uses prebuilt images from ghcr.io
-# For local development with `docker compose up --build`, use docker-compose.yml
-
 services:
   backend:
     image: ghcr.io/letsdrinksometea/semnia-backend:main
+    build: ./backend
     restart: unless-stopped
     volumes:
       - data:/data
@@ -20,6 +18,7 @@ services:
 
   frontend:
     image: ghcr.io/letsdrinksometea/semnia-frontend:main
+    build: ./frontend
     restart: unless-stopped
     ports:
       - "3000:80"
