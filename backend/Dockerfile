@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Bake ONNX model into image at build time (~115 MB, no PyTorch/CUDA needed)
-RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('intfloat/multilingual-e5-small').embed(['warmup']))"
+# Model is downloaded JIT on first start and cached in the semnia-model-cache volume
+ENV FASTEMBED_CACHE_PATH=/model-cache
 
 COPY app/ app/
 
