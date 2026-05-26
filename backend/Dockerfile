@@ -7,8 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Bake embedding model into image (~118 MB) — no internet needed at runtime
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
+# Bake ONNX model into image at build time (~115 MB, no PyTorch/CUDA needed)
+RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('intfloat/multilingual-e5-small').embed(['warmup']))"
 
 COPY app/ app/
 
