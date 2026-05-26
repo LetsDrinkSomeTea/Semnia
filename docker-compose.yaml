@@ -1,0 +1,41 @@
+# Production — uses prebuilt images from ghcr.io
+# For local development with `docker compose up --build`, use docker-compose.yml
+
+services:
+  backend:
+    image: ghcr.io/letsdrinksometea/semnia-backend:main
+    restart: unless-stopped
+    volumes:
+      - data:/data
+    environment:
+      - DB_PATH=/data/wissensdatenbank.sqlite
+      - UPLOAD_PATH=/data/uploads
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    image: ghcr.io/letsdrinksometea/semnia-frontend:main
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    volumes:
+      - ./custom:/custom:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  ollama:
+    image: ollama/ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles:
+      - llm
+
+volumes:
+  data:
+  ollama_data:
