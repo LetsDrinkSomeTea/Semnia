@@ -8,11 +8,6 @@ services:
     volumes:
       - data:/data
       - semnia-model-cache:/model-cache
-      - ./custom:/custom:ro
-    environment:
-      - TZ=${TZ}
-      - DB_PATH=/data/wissensdatenbank.sqlite
-      - UPLOAD_PATH=/data/uploads
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
       interval: 30s

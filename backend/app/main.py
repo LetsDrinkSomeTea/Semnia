@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE, TZ
+from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE, TZ, SSL_VERIFY
 from app.db.init_db import init_db, insert_seed_data
 from app.db.session import get_db
 from app.embeddings.model import load_model
@@ -20,6 +20,19 @@ from app.routers import entries, search, tags, import_, settings
 
 os.environ["TZ"] = TZ
 time.tzset()
+
+if not SSL_VERIFY:
+    import requests
+    import urllib3
+    from huggingface_hub import configure_http_backend
+
+    def _no_verify_backend() -> requests.Session:
+        session = requests.Session()
+        session.verify = False
+        return session
+
+    configure_http_backend(backend_factory=_no_verify_backend)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logging.basicConfig(level=logging.INFO)
 
