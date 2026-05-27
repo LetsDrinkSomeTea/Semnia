@@ -1,6 +1,7 @@
 import os
 import base64
 
+TZ = os.getenv("TZ", "Europe/Berlin")
 DB_PATH = os.getenv("DB_PATH", "./data/wissensdatenbank.sqlite")
 UPLOAD_PATH = os.getenv("UPLOAD_PATH", "./data/uploads")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")

@@ -136,6 +136,21 @@ def _run_migrations(conn) -> None:
         """))
         conn.commit()
 
+    if ver < 3:
+        # Migration 3: update threshold defaults changed in the mpnet model switch
+        # Only touches rows whose value still equals the old default — user-customised values are left as-is.
+        try:
+            conn.execute(text(
+                "UPDATE settings SET value = '0.3' WHERE key = 'search_threshold' AND value = '0.2'"
+            ))
+            conn.execute(text(
+                "UPDATE settings SET value = '0.9' WHERE key = 'dupe_threshold' AND value = '0.92'"
+            ))
+            conn.commit()
+        except Exception:
+            pass
+        _set_schema_version(conn, 3)
+
 
 def _get_chunks_vec_dim(conn) -> int | None:
     import re as _re

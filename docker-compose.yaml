@@ -10,6 +10,7 @@ services:
       - semnia-model-cache:/model-cache
       - ./custom:/custom:ro
     environment:
+      - TZ=${TZ}
       - DB_PATH=/data/wissensdatenbank.sqlite
       - UPLOAD_PATH=/data/uploads
     healthcheck:

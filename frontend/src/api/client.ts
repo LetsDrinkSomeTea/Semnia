@@ -237,6 +237,3 @@ export const updateSettings = (body: Partial<AppSettings>) =>
 
 export const reindex = () =>
   fetch(BASE + '/settings/reindex', { method: 'POST' })
-
-export const resetData = () =>
-  req<{ reset: boolean; seed_count: number }>('/settings/reset', { method: 'POST' })

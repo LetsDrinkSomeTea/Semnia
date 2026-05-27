@@ -5,11 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
+from app.config import DEFAULT_SETTINGS
 from app.db.session import get_db
 from app.db.models import Setting, Entry
 from app.search.hybrid import search as do_search, _snippet
 
 router = APIRouter(prefix="/api/search", tags=["search"])
+
+
+_VALID_ENTRY_TYPES = frozenset({"qa", "document"})
 
 
 class SearchRequest(BaseModel):
@@ -18,6 +22,11 @@ class SearchRequest(BaseModel):
     top_k: int | None = None
     tags: list[str] = []
     entry_type: str | None = None
+
+    def validate_entry_type(self) -> None:
+        if self.entry_type and self.entry_type not in _VALID_ENTRY_TYPES:
+            from fastapi import HTTPException
+            raise HTTPException(400, f"Ungültiger entry_type. Erlaubt: {sorted(_VALID_ENTRY_TYPES)}")
 
 
 class SummarizeRequest(BaseModel):
@@ -32,7 +41,8 @@ def _setting(db: Session, key: str, default):
 
 @router.post("")
 def search(req: SearchRequest, db: Session = Depends(get_db)):
-    threshold = req.threshold if req.threshold is not None else _setting(db, "search_threshold", 0.4)
+    req.validate_entry_type()
+    threshold = req.threshold if req.threshold is not None else _setting(db, "search_threshold", DEFAULT_SETTINGS["search_threshold"])
     top_k = req.top_k if req.top_k is not None else _setting(db, "top_k", 10)
     alpha = _setting(db, "hybrid_alpha", 0.7)
 
@@ -49,6 +59,7 @@ def search(req: SearchRequest, db: Session = Depends(get_db)):
 
 @router.post("/fuzzy")
 def fuzzy_search(req: SearchRequest, db: Session = Depends(get_db)):
+    req.validate_entry_type()
     """Typo-tolerant search. Returns {results, suggestion} where suggestion is the corrected query."""
     from collections import Counter
     top_k = req.top_k if req.top_k is not None else _setting(db, "top_k", 10)

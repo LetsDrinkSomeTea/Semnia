@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import os
+import time
+import sqlalchemy
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,12 +11,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE
+from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE, TZ
 from app.db.init_db import init_db, insert_seed_data
 from app.db.session import get_db
 from app.embeddings.model import load_model
 from app.embeddings.queue import embedding_worker
 from app.routers import entries, search, tags, import_, settings
+
+os.environ["TZ"] = TZ
+time.tzset()
 
 logging.basicConfig(level=logging.INFO)
 
@@ -84,7 +89,10 @@ def _enqueue_missing_embeddings() -> None:
         already = {
             row[0]
             for row in db.execute(
-                text(f"SELECT rowid FROM chunks_vec WHERE rowid IN ({placeholders})")
+                text("SELECT rowid FROM chunks_vec WHERE rowid IN (:ids)").bindparams(
+                    sqlalchemy.bindparam("ids", expanding=True)
+                ),
+                {"ids": all_ids},
             ).fetchall()
         }
         missing = [i for i in all_ids if i not in already]
@@ -97,14 +105,19 @@ def _enqueue_missing_embeddings() -> None:
 
 
 def _resolve_embedding_dim() -> int:
+    from app.embeddings.model import get_model
+    actual = int(len(list(get_model().embed(["x"]))[0]))
     if EMBEDDING_DIM_OVERRIDE is not None:
+        if actual != EMBEDDING_DIM_OVERRIDE:
+            logging.warning(
+                f"EMBEDDING_DIM={EMBEDDING_DIM_OVERRIDE} does not match the model's actual output "
+                f"dimension ({actual}d). Embedding inserts will fail with a dimension mismatch. "
+                f"Remove EMBEDDING_DIM or set it to {actual}."
+            )
         logging.info(f"Embedding dimension: {EMBEDDING_DIM_OVERRIDE} (from EMBEDDING_DIM env var)")
         return EMBEDDING_DIM_OVERRIDE
-    from app.embeddings.model import get_model
-    test = list(get_model().embed(["x"]))[0]
-    dim = int(len(test))
-    logging.info(f"Embedding dimension: {dim} (auto-detected from {EMBEDDING_MODEL})")
-    return dim
+    logging.info(f"Embedding dimension: {actual} (auto-detected from {EMBEDDING_MODEL})")
+    return actual
 
 
 @asynccontextmanager
@@ -126,9 +139,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Semnia", lifespan=lifespan)
 
+_cors_origins = [o.strip() for o in os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000",
+).split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -155,9 +173,11 @@ async def api_status(db: Session = Depends(get_db)):
     if chunk_count:
         try:
             all_ids = [r[0] for r in db.query(Chunk.id).all()]
-            placeholders = ",".join(str(i) for i in all_ids)
             embedded = db.execute(
-                text(f"SELECT COUNT(*) FROM chunks_vec WHERE rowid IN ({placeholders})")
+                text("SELECT COUNT(*) FROM chunks_vec WHERE rowid IN (:ids)").bindparams(
+                    sqlalchemy.bindparam("ids", expanding=True)
+                ),
+                {"ids": all_ids},
             ).scalar() or 0
             unembedded = chunk_count - embedded
         except Exception:
@@ -190,6 +210,7 @@ async def api_status(db: Session = Depends(get_db)):
         "entry_count": entry_count,
         "chunk_count": chunk_count,
         "unembedded_chunks": unembedded,
+        "reindexing": chunk_count > 0 and unembedded == chunk_count,
         "db_size_bytes": db_size_bytes,
         "model": EMBEDDING_MODEL,
         "model_ready": get_model() is not None,
@@ -208,11 +229,13 @@ if _FRONTEND_DIR and os.path.isdir(_FRONTEND_DIR):
     if os.path.isdir(_custom):
         app.mount("/custom", StaticFiles(directory=_custom), name="custom")
 
+    _frontend_real = os.path.realpath(_FRONTEND_DIR)
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _serve_frontend(full_path: str):
         if full_path:
-            candidate = os.path.join(_FRONTEND_DIR, full_path)
-            if os.path.isfile(candidate):
+            candidate = os.path.realpath(os.path.join(_FRONTEND_DIR, full_path))
+            if candidate.startswith(_frontend_real + os.sep) and os.path.isfile(candidate):
                 headers = (
                     {"Cache-Control": "public, max-age=604800, immutable"}
                     if "/assets/" in candidate

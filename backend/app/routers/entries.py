@@ -1,11 +1,12 @@
 import json
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
+from app.config import DEFAULT_SETTINGS
 from app.db.session import get_db
 from app.db.models import Entry, EntryTag, Chunk, Setting
 from app.embeddings.queue import enqueue_entry_chunks
@@ -89,6 +90,10 @@ def _to_dict(entry: Entry, related: list | None = None) -> dict:
     return d
 
 
+_VALID_ENTRY_TYPES = frozenset({"qa", "document"})
+_VALID_SORT = frozenset({"updated", "calls"})
+
+
 @router.get("")
 def list_entries(
     page: int = 1,
@@ -98,6 +103,10 @@ def list_entries(
     sort: str = "updated",
     db: Session = Depends(get_db),
 ):
+    if entry_type and entry_type not in _VALID_ENTRY_TYPES:
+        raise HTTPException(400, f"Ungültiger entry_type. Erlaubt: {sorted(_VALID_ENTRY_TYPES)}")
+    if sort not in _VALID_SORT:
+        raise HTTPException(400, f"Ungültiger sort-Wert. Erlaubt: {sorted(_VALID_SORT)}")
     q = db.query(Entry)
     if entry_type:
         q = q.filter(Entry.entry_type == entry_type)
@@ -117,7 +126,7 @@ def check_duplicate(payload: DupeCheckRequest, db: Session = Depends(get_db)):
     emb_bytes = to_bytes(encode_query(text_to_check))
 
     setting = db.query(Setting).filter(Setting.key == "dupe_threshold").first()
-    threshold = json.loads(setting.value) if setting else 0.92
+    threshold = json.loads(setting.value) if setting else DEFAULT_SETTINGS["dupe_threshold"]
 
     try:
         rows = db.execute(
@@ -243,7 +252,7 @@ def update_entry(entry_id: int, payload: QAUpdate, db: Session = Depends(get_db)
         db.query(EntryTag).filter(EntryTag.entry_id == entry_id).delete()
         for tag in payload.tags:
             db.add(EntryTag(entry_id=entry_id, tag=tag))
-    entry.updated_at = datetime.utcnow()
+    entry.updated_at = datetime.now(timezone.utc)
 
     # Replace all chunks with fresh question + answer chunks
     _delete_chunks_vec(db, entry_id)

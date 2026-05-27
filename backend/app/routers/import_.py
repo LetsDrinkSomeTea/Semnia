@@ -1,8 +1,10 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel as _PydanticBase
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.config import DEFAULT_SETTINGS
 from app.db.session import get_db
 from app.db.models import Entry, EntryTag, Chunk
 from app.import_.parsers import parse_markdown, parse_pdf, parse_docx
@@ -10,6 +12,8 @@ from app.import_.chunker import chunk_text
 from app.embeddings.queue import enqueue_entry_chunks
 
 router = APIRouter(prefix="/api/import", tags=["import"])
+
+_MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
 @router.post("")
@@ -19,6 +23,8 @@ async def upload_file(
     db: Session = Depends(get_db),
 ):
     raw = await file.read()
+    if len(raw) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Datei zu groß (max {_MAX_UPLOAD_BYTES // 1024 // 1024} MB)")
     filename = file.filename or "unknown"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
@@ -115,12 +121,16 @@ def import_status(entry_id: int, db: Session = Depends(get_db)):
     }
 
 
+class _TagsPayload(_PydanticBase):
+    tags: list[str] = []
+
+
 @router.put("/{entry_id}/tags")
-def update_import_tags(entry_id: int, payload: dict, db: Session = Depends(get_db)):
+def update_import_tags(entry_id: int, payload: _TagsPayload, db: Session = Depends(get_db)):
     entry = db.query(Entry).filter(Entry.id == entry_id, Entry.entry_type == "document").first()
     if not entry:
         raise HTTPException(404, "Dokument nicht gefunden")
-    tag_list: list[str] = payload.get("tags", [])
+    tag_list: list[str] = payload.tags
     entry.tags = json.dumps(tag_list)
     db.query(EntryTag).filter(EntryTag.entry_id == entry_id).delete()
     for tag in tag_list:
@@ -263,7 +273,7 @@ async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_d
     ]
 
     setting = db.query(Setting).filter(Setting.key == "dupe_threshold").first()
-    dupe_threshold = json.loads(setting.value) if setting else 0.92
+    dupe_threshold = json.loads(setting.value) if setting else DEFAULT_SETTINGS["dupe_threshold"]
     total = len(csv_rows)
 
     async def generate():
@@ -296,7 +306,7 @@ async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_d
 @router.post("/qa/confirm")
 def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
     """Execute bulk Q&A import: import new, skip, or replace existing entries."""
-    import datetime
+    import datetime as _dt
     from app.embeddings.queue import enqueue_entry_chunks
     from app.import_.chunker import chunk_text
 
@@ -313,10 +323,24 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
             if entry:
                 entry.answer = item.answer
                 entry.tags = json.dumps(item.tags)
-                entry.updated_at = datetime.datetime.utcnow()
+                entry.updated_at = _dt.datetime.now(_dt.timezone.utc)
                 db.query(EntryTag).filter(EntryTag.entry_id == entry.id).delete()
                 for tag in item.tags:
                     db.add(EntryTag(entry_id=entry.id, tag=tag))
+                # Rebuild chunks so vector index stays in sync with updated answer
+                _chunk_ids = [c.id for c in db.query(Chunk).filter(Chunk.entry_id == entry.id).all()]
+                for cid in _chunk_ids:
+                    try:
+                        db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": cid})
+                    except Exception:
+                        pass
+                db.query(Chunk).filter(Chunk.entry_id == entry.id).delete()
+                db.add(Chunk(entry_id=entry.id, chunk_index=0, chunk_type="question", content=entry.question or ""))
+                _answer_chunks = chunk_text(item.answer or "")
+                if not _answer_chunks:
+                    _answer_chunks = [item.answer or ""]
+                for i, ac in enumerate(_answer_chunks):
+                    db.add(Chunk(entry_id=entry.id, chunk_index=i + 1, chunk_type="answer", content=ac))
                 db.execute(
                     text("UPDATE entries_fts SET answer = :a WHERE rowid = :id"),
                     {"a": entry.answer, "id": entry.id},
@@ -365,14 +389,13 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
 def _count_embedded(db: Session, chunk_ids: list[int]) -> int:
     if not chunk_ids:
         return 0
-    count = 0
-    for cid in chunk_ids:
-        try:
-            row = db.execute(
-                text("SELECT rowid FROM chunks_vec WHERE rowid = :id"), {"id": cid}
-            ).fetchone()
-            if row:
-                count += 1
-        except Exception:
-            pass
-    return count
+    try:
+        from sqlalchemy import bindparam
+        return db.execute(
+            text("SELECT COUNT(*) FROM chunks_vec WHERE rowid IN (:ids)").bindparams(
+                bindparam("ids", expanding=True)
+            ),
+            {"ids": chunk_ids},
+        ).scalar() or 0
+    except Exception:
+        return 0
