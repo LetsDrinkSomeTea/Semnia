@@ -51,11 +51,11 @@ Pass variables to Docker Compose via the `.env` file at the project root, or dir
 
 ```yaml
 services:
-  backend:
+  app:
     environment:
       - APP_NAME=Acme Wiki
       - ACCENT_COLOR=#0ea5e9
-      - SEARCH_THRESHOLD=0.15
+      - SEARCH_THRESHOLD=0.25
 ```
 
 ### Key settings
@@ -63,12 +63,13 @@ services:
 | Variable | Default | Description |
 |---|---|---|
 | `APP_NAME` | `Semnia` | Display name in topbar and browser tab. Last 3 chars are accented. |
-| `ACCENT_COLOR` | `#cc0033` | Primary color for buttons, links, and highlights. |
-| `SEARCH_THRESHOLD` | `0.2` | Minimum score to show a result. Lower = more results. |
+| `ACCENT_COLOR` | `#9933ee` | Primary color for buttons, links, and highlights. |
+| `SEARCH_THRESHOLD` | `0.3` | Minimum score to show a result. Lower = more results. |
+| `DUPE_THRESHOLD` | `0.9` | Similarity above which a new entry is flagged as a duplicate. |
 | `TOP_K` | `15` | Maximum results per search. |
 | `HYBRID_ALPHA` | `0.7` | Semantic vs. full-text weight. `1.0` = pure semantic, `0.0` = pure BM25. |
-| `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Embedding model for semantic search. Changing it triggers a full reindex on next startup. |
-| `OLLAMA_URL` | `http://ollama:11434` | Ollama API endpoint. Remove to disable AI summaries. |
+| `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | Embedding model for semantic search. Changing it triggers a full reindex on next startup. |
+| `OLLAMA_URL` | _(empty)_ | Ollama API endpoint. Set to enable AI summaries, e.g. `http://ollama:11434`. |
 | `OLLAMA_MODEL` | `llama3.2:3b` | Model used for AI summaries. Must be available on the Ollama server. |
 | `CUSTOM_CSS_FILE` | — | Path to a mounted CSS file injected into the frontend. |
 | `BRANDING_LOGO_FILE` | — | Path to a mounted PNG/SVG logo file. |
@@ -77,7 +78,7 @@ See [`.env.example`](./.env.example) for the full list with descriptions.
 
 ### Mounting custom assets
 
-The production compose mounts `./custom` into the frontend container at `/custom`. Place logo and CSS files there:
+The production compose mounts `./custom` into the app container at `/custom`. Place logo and CSS files there:
 
 ```
 custom/
@@ -106,8 +107,8 @@ Recommended multilingual models by size:
 
 | Model | Dim | Size | Notes |
 |---|---|---|---|
-| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 384 | ~120 MB | Default. Fast, compact, ~50 languages. |
-| `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | 768 | ~280 MB | Better quality, 2× slower. |
+| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 384 | ~120 MB | Fast, compact, ~50 languages. Good when resources are tight. |
+| `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | 768 | ~280 MB | **Default.** Good balance of quality and speed. ~50 languages. |
 | `intfloat/multilingual-e5-large` | 1024 | ~560 MB | Best quality, ~100 languages, needs ~1 GB RAM. |
 | `jinaai/jina-embeddings-v2-base-de` | 768 | ~280 MB | German + English optimised, up to 8192 tokens. |
 

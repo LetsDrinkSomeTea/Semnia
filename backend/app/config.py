@@ -3,20 +3,20 @@ import base64
 
 DB_PATH = os.getenv("DB_PATH", "./data/wissensdatenbank.sqlite")
 UPLOAD_PATH = os.getenv("UPLOAD_PATH", "./data/uploads")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 DEMO: bool = os.getenv("DEMO", "").lower() in ("1", "true", "yes")
 # Explicit override only — normally left unset and auto-detected from the loaded model at startup.
 EMBEDDING_DIM_OVERRIDE: int | None = int(os.getenv("EMBEDDING_DIM")) if os.getenv("EMBEDDING_DIM") else None
 
 DEFAULT_SETTINGS: dict = {
-    "search_threshold": 0.2,
-    "dupe_threshold": 0.92,
+    "search_threshold": 0.3,
+    "dupe_threshold": 0.9,
     "top_k": 15,
     "hybrid_alpha": 0.7,
     "chunk_size": 800,
     "chunk_overlap": 150,
     "branding_name": "Semnia",
-    "branding_accent": "#cc0033",
+    "branding_accent": "#9933ee",
     "branding_font": "Inter, system-ui, sans-serif",
     "branding_logo_b64": "",
     "branding_custom_css": "",
