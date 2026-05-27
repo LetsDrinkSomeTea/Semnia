@@ -5,6 +5,8 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE
@@ -195,3 +197,29 @@ async def api_status(db: Session = Depends(get_db)):
         "ollama_ready": ollama_ready,
         "ollama_model": ollama_model,
     }
+
+
+# ── Static frontend (only active when FRONTEND_DIR is set) ───────────────────
+
+_FRONTEND_DIR = os.getenv("FRONTEND_DIR", "")
+
+if _FRONTEND_DIR and os.path.isdir(_FRONTEND_DIR):
+    _custom = os.getenv("CUSTOM_PATH", "/custom")
+    if os.path.isdir(_custom):
+        app.mount("/custom", StaticFiles(directory=_custom), name="custom")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _serve_frontend(full_path: str):
+        if full_path:
+            candidate = os.path.join(_FRONTEND_DIR, full_path)
+            if os.path.isfile(candidate):
+                headers = (
+                    {"Cache-Control": "public, max-age=604800, immutable"}
+                    if "/assets/" in candidate
+                    else {}
+                )
+                return FileResponse(candidate, headers=headers)
+        return FileResponse(
+            os.path.join(_FRONTEND_DIR, "index.html"),
+            headers={"Cache-Control": "no-cache, no-store"},
+        )

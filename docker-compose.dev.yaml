@@ -1,6 +1,8 @@
 services:
   backend:
-    image: ghcr.io/letsdrinksometea/semnia-backend:main
+    build:
+      context: .
+      target: backend        # skips the frontend Node stage
     restart: unless-stopped
     volumes:
       - ./backend/app:/backend/app   # hot reload: mounts source over baked image
@@ -40,7 +42,6 @@ services:
     restart: unless-stopped
     volumes:
       - ollama-dev:/root/.ollama
-    # Starts the server, then pulls the model on first run (cached in volume afterwards)
     entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 8 && ollama pull llama3.2:1b; wait"]
     profiles:
       - llm

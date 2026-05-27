@@ -1,0 +1,22 @@
+.git
+.github
+
+# Data volumes — never bake into image
+data/
+custom/
+
+# Frontend build artifacts (rebuilt inside Docker)
+frontend/dist/
+frontend/node_modules/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+backend/.venv/
+
+# Dev / editor noise
+.env
+.env.*
+*.md
+docker-compose*.yaml
