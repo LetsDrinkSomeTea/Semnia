@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE, TZ, SSL_VERIFY
+from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE, TZ, SSL_VERIFY, UPLOAD_PATH
 from app.db.init_db import init_db, insert_seed_data
 from app.db.session import get_db
 from app.embeddings.model import load_model
@@ -45,7 +45,7 @@ if not SSL_VERIFY:
 
 logging.basicConfig(level=logging.INFO)
 
-os.makedirs(os.getenv("UPLOAD_PATH", "./data/uploads"), exist_ok=True)
+os.makedirs(UPLOAD_PATH, exist_ok=True)
 
 
 def _migrate_qa_chunks() -> None:

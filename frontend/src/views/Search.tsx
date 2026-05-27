@@ -125,7 +125,7 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => setThreshold(settings.search_threshold), [settings.search_threshold])
-  useEffect(() => { listTags().then(setTags).catch(() => {}) }, [])
+  useEffect(() => { listTags().then(setTags).catch(() => { }) }, [])
   useEffect(() => { inputRef.current?.focus() }, [])
 
   const runSearch = useCallback(
@@ -415,7 +415,7 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
           <div className="empty-search">
             <div className="empty-search-head">
               <h2>Was möchtest du wissen?</h2>
-              <p>Suche mit <em>natürlicher Sprache</em> — semantische und Volltext-Suche arbeiten gemeinsam.</p>
+              <p>Suche mit natürlicher Sprache. <em>Semantische Bedeutung</em> und <em>Volltext-Suche</em> arbeiten gemeinsam am Ergebnis.</p>
             </div>
             {tags.length > 0 && (
               <>

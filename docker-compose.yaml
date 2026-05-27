@@ -9,12 +9,13 @@ services:
     volumes:
       - data:/data
       - semnia-model-cache:/model-cache
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   ollama:
     image: ollama/ollama

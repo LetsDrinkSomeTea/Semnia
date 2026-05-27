@@ -79,5 +79,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-offline.outputs.tags }}
           labels: ${{ steps.meta-offline.outputs.labels }}
-          cache-from: type=gha,scope=app
+          cache-from: |
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.OWNER }}/semnia:main-offline
+            type=gha,scope=app-offline
           cache-to: type=gha,mode=max,scope=app-offline
