@@ -53,8 +53,31 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: app
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
+
+      - name: Extract metadata (offline)
+        id: meta-offline
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/semnia
+          tags: |
+            type=ref,event=branch,suffix=-offline
+            type=semver,pattern={{version}},suffix=-offline
+            type=semver,pattern={{major}}.{{minor}},suffix=-offline
+            type=sha,prefix=sha-,format=short,suffix=-offline
+
+      - name: Build and push (offline)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: offline
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-offline.outputs.tags }}
+          labels: ${{ steps.meta-offline.outputs.labels }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app-offline

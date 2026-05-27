@@ -9,9 +9,6 @@ services:
       - data-dev:/data
       - semnia-model-cache:/model-cache
     environment:
-      - TZ=${TZ}
-      - DB_PATH=/data/wissensdatenbank.sqlite
-      - UPLOAD_PATH=/data/uploads
       - EMBEDDING_MODEL=intfloat/multilingual-e5-large
       # - OLLAMA_URL=http://ollama:11434
       # - OLLAMA_MODEL=llama3.2:1b

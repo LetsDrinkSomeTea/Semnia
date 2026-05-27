@@ -1,6 +1,6 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from pydantic import BaseModel as _PydanticBase
+from pydantic import BaseModel as _BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,7 @@ from app.db.models import Entry, EntryTag, Chunk
 from app.import_.parsers import parse_markdown, parse_pdf, parse_docx
 from app.import_.chunker import chunk_text
 from app.embeddings.queue import enqueue_entry_chunks
+from app.search.bm25 import normalize_umlauts
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
@@ -77,7 +78,7 @@ async def upload_file(
 
     db.execute(
         text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,'','',:c)"),
-        {"id": entry.id, "t": title, "c": text_content},
+        {"id": entry.id, "t": normalize_umlauts(title), "c": normalize_umlauts(text_content)},
     )
     db.commit()
     enqueue_entry_chunks(entry.id)
@@ -121,7 +122,7 @@ def import_status(entry_id: int, db: Session = Depends(get_db)):
     }
 
 
-class _TagsPayload(_PydanticBase):
+class _TagsPayload(_BaseModel):
     tags: list[str] = []
 
 
@@ -137,7 +138,7 @@ def update_import_tags(entry_id: int, payload: _TagsPayload, db: Session = Depen
         db.add(EntryTag(entry_id=entry_id, tag=tag))
     db.execute(
         text("UPDATE entries_fts SET title = :t WHERE rowid = :id"),
-        {"t": entry.title, "id": entry_id},
+        {"t": normalize_umlauts(entry.title), "id": entry_id},
     )
     db.commit()
     return {"id": entry.id, "tags": tag_list}
@@ -159,7 +160,6 @@ def delete_import(entry_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
-from pydantic import BaseModel as _BaseModel
 import numpy as np
 
 
@@ -178,7 +178,6 @@ def _process_qa_row(
     dupe_threshold: float,
 ) -> dict:
     """Synchronous per-row processing: tag suggestions + dupe check. Runs in a thread."""
-    import asyncio
     from collections import Counter
     from app.db.session import SessionLocal
     from app.embeddings.model import encode_query, to_bytes
@@ -343,7 +342,7 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
                     db.add(Chunk(entry_id=entry.id, chunk_index=i + 1, chunk_type="answer", content=ac))
                 db.execute(
                     text("UPDATE entries_fts SET answer = :a WHERE rowid = :id"),
-                    {"a": entry.answer, "id": entry.id},
+                    {"a": normalize_umlauts(entry.answer or ""), "id": entry.id},
                 )
                 enqueue_ids.append(entry.id)
                 replaced += 1
@@ -373,7 +372,7 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
 
         db.execute(
             text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,:q,:a,'')"),
-            {"id": entry.id, "t": title, "q": item.question, "a": item.answer},
+            {"id": entry.id, "t": normalize_umlauts(title), "q": normalize_umlauts(item.question), "a": normalize_umlauts(item.answer or "")},
         )
         enqueue_ids.append(entry.id)
         imported += 1

@@ -1,6 +1,7 @@
 services:
   app:
     image: ghcr.io/letsdrinksometea/semnia:main
+    container_name: semnia
     build: .
     restart: unless-stopped
     ports:
@@ -17,6 +18,7 @@ services:
 
   ollama:
     image: ollama/ollama
+    container_name: semnia-ollama
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama

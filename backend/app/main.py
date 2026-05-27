@@ -22,17 +22,26 @@ os.environ["TZ"] = TZ
 time.tzset()
 
 if not SSL_VERIFY:
-    import requests
+    import ssl
     import urllib3
-    from huggingface_hub import configure_http_backend
-
-    def _no_verify_backend() -> requests.Session:
-        session = requests.Session()
-        session.verify = False
-        return session
-
-    configure_http_backend(backend_factory=_no_verify_backend)
+    # Patch Python's global SSL context — affects urllib, requests, httpx, and any
+    # library that doesn't override the default context explicitly.
+    ssl._create_default_https_context = ssl._create_unverified_context
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    # Also patch huggingface_hub's own session factory so its retry logic
+    # doesn't re-enable verification on a fresh session.
+    try:
+        import requests
+        from huggingface_hub import configure_http_backend
+
+        def _no_verify_backend() -> requests.Session:
+            session = requests.Session()
+            session.verify = False
+            return session
+
+        configure_http_backend(backend_factory=_no_verify_backend)
+    except Exception:
+        pass
 
 logging.basicConfig(level=logging.INFO)
 
@@ -98,7 +107,6 @@ def _enqueue_missing_embeddings() -> None:
         all_ids = [row[0] for row in db.query(Chunk.id).all()]
         if not all_ids:
             return
-        placeholders = ",".join(str(i) for i in all_ids)
         already = {
             row[0]
             for row in db.execute(

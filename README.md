@@ -30,6 +30,24 @@ open http://localhost:3000
 
 The app starts with a small set of example entries. Create your first real entry via **Neu** in the navigation, or upload a document via **Import**.
 
+> **First startup:** The embedding model (~280 MB) is downloaded automatically on the first run and cached in the `semnia-model-cache` Docker volume. This can take a few minutes depending on your internet connection — progress is visible in the container logs. Subsequent starts are instant.
+>
+> **Network access required:** The standard image needs to reach `huggingface.co` on first startup. If your environment blocks this (corporate proxy, firewall, air-gapped network), use the `-offline` image instead.
+
+### Offline / air-gapped environments
+
+If the container cannot reach HuggingFace at runtime, use the `-offline` image variant. It has the default embedding model pre-baked and starts instantly without any download or network access:
+
+```yaml
+# docker-compose.override.yml
+services:
+  app:
+    image: ghcr.io/letsdrinksometea/semnia:main-offline
+    # model-cache volume not needed
+```
+
+The offline image is built from the same source and released alongside the standard image. It is larger (~280 MB extra) but otherwise identical.
+
 ### With AI summaries (Ollama)
 
 ```bash
@@ -69,6 +87,7 @@ services:
 | `TOP_K` | `15` | Maximum results per search. |
 | `HYBRID_ALPHA` | `0.7` | Semantic vs. full-text weight. `1.0` = pure semantic, `0.0` = pure BM25. |
 | `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | Embedding model for semantic search. Changing it triggers a full reindex on next startup. |
+| `SSL_VERIFY` | `true` | Set to `false` to disable HTTPS certificate verification for HuggingFace downloads. Use when your network has a corporate CA that Python does not trust. Not needed with the `-offline` image. |
 | `OLLAMA_URL` | _(empty)_ | Ollama API endpoint. Set to enable AI summaries, e.g. `http://ollama:11434`. |
 | `OLLAMA_MODEL` | `llama3.2:3b` | Model used for AI summaries. Must be available on the Ollama server. |
 | `CUSTOM_CSS_FILE` | — | Path to a mounted CSS file injected into the frontend. |

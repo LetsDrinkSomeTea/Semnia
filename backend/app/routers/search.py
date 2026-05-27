@@ -59,8 +59,8 @@ def search(req: SearchRequest, db: Session = Depends(get_db)):
 
 @router.post("/fuzzy")
 def fuzzy_search(req: SearchRequest, db: Session = Depends(get_db)):
-    req.validate_entry_type()
     """Typo-tolerant search. Returns {results, suggestion} where suggestion is the corrected query."""
+    req.validate_entry_type()
     from collections import Counter
     top_k = req.top_k if req.top_k is not None else _setting(db, "top_k", 10)
     query_words = [w.lower() for w in req.query.split() if len(w) >= 3]

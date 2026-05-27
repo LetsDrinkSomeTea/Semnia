@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import numpy as np
 from fastembed import TextEmbedding
 from app.config import EMBEDDING_MODEL
@@ -13,10 +14,11 @@ def get_model() -> TextEmbedding | None:
 def load_model() -> TextEmbedding:
     global _model
     if _model is None:
-        import logging
         logging.info(f"Lade Embedding-Modell: {EMBEDDING_MODEL} …")
         try:
-            _model = TextEmbedding(EMBEDDING_MODEL)
+            from tqdm.contrib.logging import logging_redirect_tqdm
+            with logging_redirect_tqdm():
+                _model = TextEmbedding(EMBEDDING_MODEL)
         except ValueError:
             supported = sorted(m["model"] for m in TextEmbedding.list_supported_models())
             raise ValueError(
@@ -27,14 +29,12 @@ def load_model() -> TextEmbedding:
     return _model
 
 
-def encode_query(text: str) -> np.ndarray:
-    result = list(load_model().embed([text]))
-    return result[0].astype(np.float32)
+def encode(text: str) -> np.ndarray:
+    return list(load_model().embed([text]))[0].astype(np.float32)
 
 
-def encode_passage(text: str) -> np.ndarray:
-    result = list(load_model().embed([text]))
-    return result[0].astype(np.float32)
+encode_query = encode
+encode_passage = encode
 
 
 def to_bytes(emb: np.ndarray) -> bytes:

@@ -58,6 +58,7 @@ export interface ApiStatus {
   entry_count: number
   chunk_count: number
   unembedded_chunks: number
+  reindexing: boolean
   db_size_bytes: number
   model: string
   model_ready: boolean
