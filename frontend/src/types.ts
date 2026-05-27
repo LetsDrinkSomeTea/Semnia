@@ -56,10 +56,14 @@ export interface AppSettings {
 
 export interface ApiStatus {
   entry_count: number
+  chunk_count: number
+  unembedded_chunks: number
+  db_size_bytes: number
   model: string
   model_ready: boolean
   ollama_configured: boolean
   ollama_ready: boolean
+  ollama_model: string
 }
 
 export interface ImportItem {

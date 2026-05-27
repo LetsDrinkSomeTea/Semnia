@@ -162,15 +162,50 @@ export interface QABulkRow {
   duplicates: { id: number; question: string; answer: string; score: number }[]
 }
 
-export const parseQACsv = async (file: File): Promise<{ rows: QABulkRow[]; total: number }> => {
+export interface QABulkRowEvent extends QABulkRow {
+  index: number
+  total: number
+}
+
+export function parseQACsvStream(
+  file: File,
+  onRow: (row: QABulkRowEvent) => void,
+  onDone: (total: number) => void,
+  onError: (msg: string) => void,
+  signal?: AbortSignal,
+): void {
   const form = new FormData()
   form.append('file', file)
-  const r = await fetch(BASE + '/import/qa/parse', { method: 'POST', body: form })
-  if (!r.ok) {
-    const msg = await r.text().catch(() => r.statusText)
-    throw new Error(msg || `HTTP ${r.status}`)
-  }
-  return r.json()
+  fetch(BASE + '/import/qa/parse', { method: 'POST', body: form, signal })
+    .then(async (resp) => {
+      if (!resp.ok || !resp.body) {
+        const msg = await resp.text().catch(() => resp.statusText)
+        onError(msg || `HTTP ${resp.status}`)
+        return
+      }
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.done) { onDone(data.total); return }
+            if (data.index !== undefined) onRow(data as QABulkRowEvent)
+          } catch { /* malformed */ }
+        }
+      }
+      onDone(0)
+    })
+    .catch((err) => {
+      if (err?.name !== 'AbortError') onError('Verbindung unterbrochen')
+    })
 }
 
 export interface QABulkAction {

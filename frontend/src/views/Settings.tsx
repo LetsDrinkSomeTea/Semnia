@@ -1,223 +1,137 @@
-import { useState } from 'react'
-import { updateSettings, reindex, resetData } from '../api/client'
-import type { AppSettings } from '../types'
+import { useState, useEffect } from 'react'
+import { getStatus } from '../api/client'
 import { useSettings } from '../hooks/useSettings'
+import type { ApiStatus } from '../types'
 
 interface Props {
   toast: (msg: string, kind?: 'success' | 'error' | 'info') => void
 }
 
-export default function Settings({ toast }: Props) {
-  const { settings, loading, refresh } = useSettings()
-  const [local, setLocal] = useState<Partial<AppSettings>>({})
-  const [reindexing, setReindexing] = useState(false)
-  const [resetting, setResetting] = useState(false)
+function fmtBytes(b: number): string {
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`
+  return `${(b / 1024 / 1024).toFixed(1)} MB`
+}
 
-  const val = <K extends keyof AppSettings>(key: K): AppSettings[K] =>
-    (local[key] ?? settings[key]) as AppSettings[K]
+type StatusState = 'ok' | 'warn' | 'err'
 
-  const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
-    setLocal((l) => ({ ...l, [key]: value }))
+interface StatusRow {
+  label: string
+  state: StatusState
+  value: string
+  sub?: string
+}
 
-  const save = async () => {
-    try {
-      await updateSettings(local)
-      await refresh()
-      setLocal({})
-      toast('Einstellungen gespeichert.', 'success')
-    } catch {
-      toast('Speichern fehlgeschlagen.', 'error')
-    }
-  }
+export default function System(_props: Props) {
+  const { settings, loading } = useSettings()
+  const [status, setStatus] = useState<ApiStatus | null>(null)
+  const [statusError, setStatusError] = useState(false)
 
-  const handleReindex = async () => {
-    setReindexing(true)
-    try {
-      const r = await reindex()
-      const reader = r.body?.getReader()
-      if (reader) {
-        while (true) {
-          const { done } = await reader.read()
-          if (done) break
-        }
-      }
-      toast('Reindex abgeschlossen.', 'success')
-    } catch {
-      toast('Reindex fehlgeschlagen.', 'error')
-    } finally {
-      setReindexing(false)
-    }
-  }
-
-  const handleReset = async () => {
-    if (!confirm('Alle Daten löschen und Seed-Daten laden? Dies kann nicht rückgängig gemacht werden.'))
-      return
-    setResetting(true)
-    try {
-      const r = await resetData()
-      toast(`Zurückgesetzt. ${r.seed_count} Seed-Einträge geladen.`, 'success')
-    } catch {
-      toast('Reset fehlgeschlagen.', 'error')
-    } finally {
-      setResetting(false)
-    }
-  }
-
-  const Slider = ({
-    label,
-    envVar,
-    settKey,
-    description,
-  }: {
-    label: string
-    envVar: string
-    settKey: 'search_threshold' | 'dupe_threshold' | 'hybrid_alpha'
-    description: string
-  }) => {
-    const v = val(settKey) as number
-    const pct = `${Math.round(v * 100)}%`
-    return (
-      <div className="setting">
-        <h6>{label} <code className="env-tag">{envVar}</code></h6>
-        <div className="val">{v.toFixed(2)}</div>
-        <div className="threshold-slider" style={{ '--p': pct } as React.CSSProperties}>
-          <div
-            className="track"
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect()
-              set(settKey, Math.round(((e.clientX - rect.left) / rect.width) * 100) / 100 as AppSettings[typeof settKey])
-            }}
-          >
-            <div className="fill" />
-            <div className="knob" />
-          </div>
-          <div className="label">
-            <span>0</span>
-            <span className="v">{pct}</span>
-            <span>1</span>
-          </div>
-        </div>
-        <small>{description}</small>
-      </div>
-    )
-  }
+  useEffect(() => {
+    getStatus()
+      .then(s => { setStatus(s); setStatusError(false) })
+      .catch(() => setStatusError(true))
+  }, [])
 
   if (loading) return <main className="pb-main"><div className="empty"><p>Lädt…</p></div></main>
+
+  const statusRows: StatusRow[] = [
+    {
+      label: 'Embedding-Modell',
+      state: statusError ? 'err' : !status ? 'warn' : status.model_ready ? 'ok' : 'warn',
+      value: statusError ? 'Nicht erreichbar' : !status ? 'Lädt…' : status.model_ready ? 'Bereit' : 'Lädt…',
+      sub: status?.model,
+    },
+    {
+      label: 'Ollama',
+      state: !status?.ollama_configured ? 'warn' : status.ollama_ready ? 'ok' : 'err',
+      value: !status?.ollama_configured ? 'Nicht konfiguriert' : status.ollama_ready ? 'Erreichbar' : 'Nicht erreichbar',
+      sub: status?.ollama_model || undefined,
+    },
+    {
+      label: 'Datenbank',
+      state: statusError ? 'err' : status ? 'ok' : 'warn',
+      value: status ? `${status.entry_count} Einträge` : statusError ? 'Nicht erreichbar' : '—',
+      sub: status ? `${fmtBytes(status.db_size_bytes)} · ${status.chunk_count} Chunks` : undefined,
+    },
+    {
+      label: 'Embedding-Queue',
+      state: !status ? 'warn' : status.unembedded_chunks === 0 ? 'ok' : 'warn',
+      value: !status ? '—' : status.unembedded_chunks === 0 ? 'Alles eingebettet' : `${status.unembedded_chunks} ausstehend`,
+      sub: status && status.unembedded_chunks > 0 ? `von ${status.chunk_count} Chunks` : undefined,
+    },
+  ]
+
+  const configGroups = [
+    {
+      label: 'Embedding',
+      rows: [
+        { label: 'Embedding-Modell', value: status?.model ?? '—', env: 'EMBEDDING_MODEL' },
+      ],
+    },
+    {
+      label: 'Suche',
+      rows: [
+        { label: 'Ähnlichkeitsschwelle', value: settings.search_threshold?.toFixed(2) ?? '—', env: 'SEARCH_THRESHOLD' },
+        { label: 'Duplikat-Schwelle', value: settings.dupe_threshold?.toFixed(2) ?? '—', env: 'DUPE_THRESHOLD' },
+        { label: 'Hybrid-Alpha (α)', value: settings.hybrid_alpha?.toFixed(2) ?? '—', env: 'HYBRID_ALPHA' },
+        { label: 'Top-K Ergebnisse', value: String(settings.top_k ?? '—'), env: 'TOP_K' },
+      ],
+    },
+    {
+      label: 'Chunking',
+      rows: [
+        { label: 'Chunk-Größe', value: `${settings.chunk_size} Zeichen`, env: 'CHUNK_SIZE' },
+        { label: 'Chunk-Überlappung', value: `${settings.chunk_overlap} Zeichen`, env: 'CHUNK_OVERLAP' },
+      ],
+    },
+    {
+      label: 'Ollama',
+      rows: [
+        { label: 'Ollama URL', value: settings.ollama_url || '—', env: 'OLLAMA_URL' },
+        { label: 'Ollama Modell', value: settings.ollama_model || '—', env: 'OLLAMA_MODEL' },
+      ],
+    },
+  ]
 
   return (
     <main className="pb-main">
       <div className="page-head">
         <div>
-          <h1 className="page-h">Einstellungen</h1>
-          <p className="page-sub">Laufzeitkonfiguration. Env-vars (siehe <code>.env.example</code>) werden beim Neustart angewendet.</p>
-        </div>
-        <div className="action-row">
-          {Object.keys(local).length > 0 && (
-            <button className="btn" onClick={save}>Speichern</button>
-          )}
+          <h1 className="page-h">Systeminfo</h1>
+          <p className="page-sub">Status und Konfiguration. Werte werden über Umgebungsvariablen gesetzt.</p>
         </div>
       </div>
 
-      <div className="settings-wrap">
-        <h3>Suche</h3>
-        <div className="settings-grid">
-          <Slider
-            label="Ähnlichkeitsschwelle"
-            envVar="SEARCH_THRESHOLD"
-            settKey="search_threshold"
-            description="Minimum-Score für Suchergebnisse (0 = alles, 1 = nur exakt)"
-          />
-          <Slider
-            label="Duplikat-Schwelle"
-            envVar="DUPE_THRESHOLD"
-            settKey="dupe_threshold"
-            description="Ab wann ein Eintrag im Editor als Duplikat gewarnt wird"
-          />
-          <Slider
-            label="Hybrid-Alpha (α)"
-            envVar="HYBRID_ALPHA"
-            settKey="hybrid_alpha"
-            description="Gewichtung Semantik vs. Volltext (1 = rein semantisch, 0 = rein Volltext)"
-          />
-          <div className="setting">
-            <h6>Top-K Ergebnisse <code className="env-tag">TOP_K</code></h6>
-            <div className="stepper">
-              <button onClick={() => set('top_k', Math.max(1, (val('top_k') as number) - 1))}>−</button>
-              <span className="v">{val('top_k')}</span>
-              <button onClick={() => set('top_k', Math.min(50, (val('top_k') as number) + 1))}>+</button>
+      <p className="section-h">Status</p>
+      <div className="sys-status-list">
+        {statusRows.map((row) => (
+          <div className="sys-status-row" key={row.label}>
+            <div className={`sys-status-dot ${row.state}`} />
+            <div className="sys-status-info">
+              <span className="sys-status-name">{row.label}</span>
+              {row.sub && <span className="sys-status-sub">{row.sub}</span>}
             </div>
-            <small>Maximale Anzahl Suchergebnisse</small>
+            <span className={`sys-status-badge ${row.state}`}>{row.value}</span>
           </div>
-          <div className="setting">
-            <h6>Chunk-Größe (Zeichen) <code className="env-tag">CHUNK_SIZE</code></h6>
-            <div className="stepper">
-              <button onClick={() => set('chunk_size', Math.max(200, (val('chunk_size') as number) - 100))}>−</button>
-              <span className="v">{val('chunk_size')}</span>
-              <button onClick={() => set('chunk_size', Math.min(5000, (val('chunk_size') as number) + 100))}>+</button>
-            </div>
-            <small>Maximale Chunk-Länge bei Antworten und Dokumenten (nach Reindex aktiv)</small>
-          </div>
-          <div className="setting">
-            <h6>Chunk-Überlappung (Zeichen) <code className="env-tag">CHUNK_OVERLAP</code></h6>
-            <div className="stepper">
-              <button onClick={() => set('chunk_overlap', Math.max(0, (val('chunk_overlap') as number) - 50))}>−</button>
-              <span className="v">{val('chunk_overlap')}</span>
-              <button onClick={() => set('chunk_overlap', Math.min(1000, (val('chunk_overlap') as number) + 50))}>+</button>
-            </div>
-            <small>Überlappung zwischen aufeinanderfolgenden Chunks (nach Reindex aktiv)</small>
-          </div>
-        </div>
+        ))}
+      </div>
 
-        <h3>Ollama <span style={{ fontWeight: 400, fontSize: 13, color: 'var(--primary--500)' }}>(KI-Zusammenfassung)</span></h3>
-        <div className="settings-grid">
-          <div className="setting">
-            <h6>Ollama URL <code className="env-tag">OLLAMA_URL</code></h6>
-            <input
-              className="txt"
-              value={val('ollama_url') as string}
-              onChange={(e) => set('ollama_url', e.target.value)}
-              placeholder="http://ollama:11434"
-            />
-            <small>Leer lassen, wenn Ollama nicht verwendet wird</small>
+      <p className="section-h">Konfiguration</p>
+      <div className="sys-config">
+        {configGroups.map(({ label, rows }) => (
+          <div key={label}>
+            <div className="sys-config-group-head">{label}</div>
+            {rows.map(({ label: rowLabel, value, env }) => (
+              <div className="sys-config-row" key={env}>
+                <span className="sys-config-label">
+                  {rowLabel}
+                  <code className="env-tag">{env}</code>
+                </span>
+                <span className="sys-config-value">{value}</span>
+              </div>
+            ))}
           </div>
-          <div className="setting">
-            <h6>Modell <code className="env-tag">OLLAMA_MODEL</code></h6>
-            <input
-              className="txt"
-              value={val('ollama_model') as string}
-              onChange={(e) => set('ollama_model', e.target.value)}
-              placeholder="llama3.2:3b"
-            />
-            <small>Muss auf dem Ollama-Server verfügbar sein</small>
-          </div>
-        </div>
-
-        <h3>System</h3>
-        <div className="settings-grid">
-          <div className="setting">
-            <h6>Embeddings neu berechnen</h6>
-            <p style={{ fontSize: 13, color: 'var(--primary--900)', marginBottom: 12 }}>
-              Alle Einträge werden neu eingebettet. Dauert einige Minuten.
-            </p>
-            <button className="btn btn--ghost btn--sm" onClick={handleReindex} disabled={reindexing}>
-              {reindexing ? 'Läuft…' : 'Reindex starten'}
-            </button>
-          </div>
-          <div className="setting">
-            <h6>Auf Seed-Daten zurücksetzen</h6>
-            <p style={{ fontSize: 13, color: 'var(--primary--900)', marginBottom: 12 }}>
-              Alle Einträge werden gelöscht. Beispieldaten werden geladen.
-            </p>
-            <button
-              className="btn btn--sm"
-              onClick={handleReset}
-              disabled={resetting}
-              style={{ background: 'var(--base--action)' }}
-            >
-              {resetting ? 'Läuft…' : 'Zurücksetzen'}
-            </button>
-          </div>
-        </div>
+        ))}
       </div>
     </main>
   )

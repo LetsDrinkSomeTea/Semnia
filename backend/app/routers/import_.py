@@ -161,14 +161,86 @@ class BulkQAAction(_BaseModel):
     replace_id: int | None = None
 
 
-@router.post("/qa/parse")
-async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Parse a Q&A CSV file and return rows with dupe check + tag suggestions."""
-    import csv
-    import io
-    from app.db.models import Setting
+def _process_qa_row(
+    question: str,
+    answer: str,
+    tags: list[str],
+    dupe_threshold: float,
+) -> dict:
+    """Synchronous per-row processing: tag suggestions + dupe check. Runs in a thread."""
+    import asyncio
+    from collections import Counter
+    from app.db.session import SessionLocal
     from app.embeddings.model import encode_query, to_bytes
     from app.search.bm25 import fts_search
+
+    combined = f"{question} {answer}"
+    row_db = SessionLocal()
+    suggested_tags: list[str] = []
+    duplicates: list[dict] = []
+    try:
+        # Tag suggestions via BM25
+        if len(combined) >= 10:
+            hits = fts_search(row_db, combined, top_k=10)
+            entry_ids = [eid for eid, _ in hits]
+            if entry_ids:
+                entries = row_db.query(Entry).filter(Entry.id.in_(entry_ids)).all()
+                ctr: Counter = Counter()
+                for e in entries:
+                    for t in json.loads(e.tags or "[]"):
+                        ctr[t] += 1
+                suggested_tags = [t for t, _ in ctr.most_common(5) if t not in tags]
+
+        # Dupe check via embedding
+        emb_bytes = to_bytes(encode_query(combined))
+        vec_rows = row_db.execute(
+            text("SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH :emb ORDER BY distance LIMIT 20"),
+            {"emb": emb_bytes},
+        ).fetchall()
+        chunk_ids = [int(r[0]) for r in vec_rows]
+        chunk_to_entry = {
+            c.id: c.entry_id
+            for c in row_db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all()
+        } if chunk_ids else {}
+
+        seen: set[int] = set()
+        for rowid, distance in vec_rows:
+            entry_id = chunk_to_entry.get(int(rowid))
+            if not entry_id or entry_id in seen:
+                continue
+            cosine_sim = float(np.clip(1.0 - (distance ** 2) / 2.0, 0.0, 1.0))
+            if cosine_sim >= dupe_threshold:
+                e = row_db.query(Entry).filter(Entry.id == entry_id).first()
+                if e and e.entry_type == "qa":
+                    seen.add(entry_id)
+                    duplicates.append({
+                        "id": e.id,
+                        "question": e.question,
+                        "answer": (e.answer or "")[:200],
+                        "score": round(cosine_sim, 4),
+                    })
+    except Exception:
+        pass
+    finally:
+        row_db.close()
+
+    return {
+        "question": question,
+        "answer": answer,
+        "tags": tags,
+        "suggested_tags": suggested_tags,
+        "duplicates": duplicates,
+    }
+
+
+@router.post("/qa/parse")
+async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Stream Q&A CSV rows one by one as they are processed (SSE)."""
+    import asyncio
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+    from app.db.models import Setting
 
     raw = await file.read()
     try:
@@ -180,76 +252,45 @@ async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_d
     if reader.fieldnames is None or "question" not in reader.fieldnames:
         raise HTTPException(400, "CSV muss eine 'question'-Spalte haben")
 
+    csv_rows = [
+        {
+            "question": (r.get("question") or "").strip(),
+            "answer": (r.get("answer") or "").strip(),
+            "tags": [t.strip() for t in (r.get("tags") or "").split(",") if t.strip()],
+        }
+        for r in reader
+        if (r.get("question") or "").strip()
+    ]
+
     setting = db.query(Setting).filter(Setting.key == "dupe_threshold").first()
     dupe_threshold = json.loads(setting.value) if setting else 0.92
+    total = len(csv_rows)
 
-    rows = []
-    for csv_row in reader:
-        question = (csv_row.get("question") or "").strip()
-        answer = (csv_row.get("answer") or "").strip()
-        tags_raw = (csv_row.get("tags") or "").strip()
-        tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    async def generate():
+        for idx, row in enumerate(csv_rows):
+            try:
+                result = await asyncio.to_thread(
+                    _process_qa_row,
+                    row["question"], row["answer"], row["tags"], dupe_threshold,
+                )
+            except Exception as exc:
+                result = {
+                    "question": row["question"],
+                    "answer": row["answer"],
+                    "tags": row["tags"],
+                    "suggested_tags": [],
+                    "duplicates": [],
+                }
+            result["index"] = idx
+            result["total"] = total
+            yield f"data: {json.dumps(result, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'total': total})}\n\n"
 
-        if not question:
-            continue
-
-        # Tag suggestions via BM25 on existing entries
-        suggested_tags: list[str] = []
-        combined = f"{question} {answer}"
-        if len(combined) >= 10:
-            from collections import Counter
-            hits = fts_search(db, combined, top_k=10)
-            entry_ids = [eid for eid, _ in hits]
-            if entry_ids:
-                entries = db.query(Entry).filter(Entry.id.in_(entry_ids)).all()
-                ctr: Counter = Counter()
-                for e in entries:
-                    for t in json.loads(e.tags or "[]"):
-                        ctr[t] += 1
-                suggested_tags = [t for t, _ in ctr.most_common(5) if t not in tags]
-
-        # Duplicate check via embedding
-        duplicates: list[dict] = []
-        try:
-            emb_bytes = to_bytes(encode_query(combined))
-            vec_rows = db.execute(
-                text("SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH :emb ORDER BY distance LIMIT 20"),
-                {"emb": emb_bytes},
-            ).fetchall()
-            chunk_ids = [int(r[0]) for r in vec_rows]
-            chunk_to_entry = {
-                c.id: c.entry_id
-                for c in db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all()
-            } if chunk_ids else {}
-
-            seen: set[int] = set()
-            for rowid, distance in vec_rows:
-                entry_id = chunk_to_entry.get(int(rowid))
-                if not entry_id or entry_id in seen:
-                    continue
-                cosine_sim = float(np.clip(1.0 - (distance ** 2) / 2.0, 0.0, 1.0))
-                if cosine_sim >= dupe_threshold:
-                    e = db.query(Entry).filter(Entry.id == entry_id).first()
-                    if e and e.entry_type == "qa":
-                        seen.add(entry_id)
-                        duplicates.append({
-                            "id": e.id,
-                            "question": e.question,
-                            "answer": (e.answer or "")[:200],
-                            "score": round(cosine_sim, 4),
-                        })
-        except Exception:
-            pass
-
-        rows.append({
-            "question": question,
-            "answer": answer,
-            "tags": tags,
-            "suggested_tags": suggested_tags,
-            "duplicates": duplicates,
-        })
-
-    return {"rows": rows, "total": len(rows)}
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/qa/confirm")

@@ -521,16 +521,13 @@ input, textarea, select { font-family: var(--font-body); }
   background: var(--base--action);
   color: #fff;
   border: 0;
-  padding: 0 20px;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  font-weight: 600;
+  padding: 0 18px;
   cursor: pointer;
   transition: background var(--t);
   flex-shrink: 0;
-  white-space: nowrap;
-  min-width: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .search-shell .submit:hover { background: #a8002a; }
@@ -1752,6 +1749,14 @@ input, textarea, select { font-family: var(--font-body); }
 
 /* ── Q&A Bulk review ───────────────────────────────────────────────────────── */
 
+.upload-done-hint {
+  font-size: 13px;
+  color: var(--primary--500);
+  margin: 4px 0 0;
+}
+
+.upload-done-hint a { color: var(--base--action); }
+
 .qa-bulk-upload { display: flex; flex-direction: column; gap: 24px; }
 
 .qa-bulk-hint .code-block {
@@ -1784,6 +1789,23 @@ input, textarea, select { font-family: var(--font-body); }
   font-size: 13px;
   color: var(--primary--500);
   flex-wrap: wrap;
+}
+
+.qa-parse-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary--900);
+  font-weight: 500;
+}
+
+.qa-parse-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .qa-stat-new  { color: #2e7d32; font-weight: 500; }
@@ -2138,6 +2160,134 @@ input, textarea, select { font-family: var(--font-body); }
 }
 
 /* ============================================================================
+   System view
+   ============================================================================ */
+
+/* ── Status list ─────────────────────────────────────────────────────────── */
+
+.sys-status-list {
+  background: #fff;
+  border: 1px solid var(--primary--200);
+  box-shadow: var(--shadow-card);
+  margin-bottom: 24px;
+}
+
+.sys-status-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 0 12px;
+  padding: 13px 20px;
+  border-bottom: 1px solid var(--primary--100);
+}
+
+.sys-status-row:last-child { border-bottom: 0; }
+
+.sys-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary--200);
+  flex-shrink: 0;
+  justify-self: center;
+}
+
+.sys-status-dot.ok  { background: #22c55e; }
+.sys-status-dot.warn { background: #f59e0b; }
+.sys-status-dot.err { background: var(--base--action); }
+
+.sys-status-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sys-status-name {
+  font-size: 13px;
+  color: var(--base--black);
+  font-weight: 500;
+}
+
+.sys-status-sub {
+  font-size: 11px;
+  color: var(--primary--500);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sys-status-badge {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--primary--500);
+}
+
+.sys-status-badge.ok  { color: #16a34a; }
+.sys-status-badge.warn { color: #b45309; }
+.sys-status-badge.err { color: var(--base--action); }
+
+/* ── Config table ────────────────────────────────────────────────────────── */
+
+.sys-config {
+  background: #fff;
+  border: 1px solid var(--primary--200);
+  box-shadow: var(--shadow-card);
+}
+
+.sys-config-group-head {
+  padding: 9px 20px;
+  background: var(--primary--100);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--primary--500);
+  font-weight: 600;
+  border-bottom: 1px solid var(--primary--200);
+}
+
+.sys-config-group-head:not(:first-child) {
+  border-top: 1px solid var(--primary--200);
+}
+
+.sys-config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 11px 20px;
+  border-bottom: 1px solid var(--primary--100);
+}
+
+.sys-config-row:last-child { border-bottom: 0; }
+
+.sys-config-label {
+  font-size: 13px;
+  color: var(--primary--900);
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+.sys-config-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--base--black);
+  background: var(--primary--100);
+  border: 1px solid var(--primary--200);
+  padding: 3px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 340px;
+  text-align: right;
+}
+
+/* ============================================================================
    Responsive
    ============================================================================ */
 
@@ -2149,8 +2299,10 @@ input, textarea, select { font-family: var(--font-body); }
   /* Settings grid single column */
   .settings-grid { grid-template-columns: 1fr; }
 
-  /* Import queue — hide delete action on narrow screens */
-  .queue-row { grid-template-columns: 48px 1fr 120px; }
+
+  /* Import queue — compact on mobile */
+  .queue-row { grid-template-columns: 44px 1fr 70px; }
+  .queue-row .bar { display: none; }
   .queue-row .queue-actions { display: none; }
 
   /* Search sidebar becomes a slide-in overlay */
@@ -2255,6 +2407,9 @@ input, textarea, select { font-family: var(--font-body); }
 
   /* Settings wrap less padding */
   .settings-wrap { padding: 20px 18px; }
+
+  /* System config: value can shrink on narrow screens */
+  .sys-config-value { max-width: 160px; }
 
   /* Import drop smaller */
   .import-drop { padding: 36px 20px; }

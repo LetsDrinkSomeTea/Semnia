@@ -141,14 +141,39 @@ app.include_router(settings.router)
 @app.get("/api/status")
 async def api_status(db: Session = Depends(get_db)):
     import httpx
-    from app.db.models import Entry, Setting
+    from sqlalchemy import text
+    from app.db.models import Entry, Chunk, Setting
     from app.embeddings.model import get_model
 
     entry_count = db.query(Entry).count()
+    chunk_count = db.query(Chunk).count()
+
+    # Unembedded chunks
+    unembedded = 0
+    if chunk_count:
+        try:
+            all_ids = [r[0] for r in db.query(Chunk.id).all()]
+            placeholders = ",".join(str(i) for i in all_ids)
+            embedded = db.execute(
+                text(f"SELECT COUNT(*) FROM chunks_vec WHERE rowid IN ({placeholders})")
+            ).scalar() or 0
+            unembedded = chunk_count - embedded
+        except Exception:
+            unembedded = 0
+
+    # DB file size
+    db_size_bytes = 0
+    try:
+        db_size_bytes = os.path.getsize(os.getenv("DB_PATH", "./data/wissensdatenbank.sqlite"))
+    except OSError:
+        pass
 
     ollama_setting = db.query(Setting).filter(Setting.key == "ollama_url").first()
     ollama_url = json.loads(ollama_setting.value) if ollama_setting else ""
     ollama_configured = bool(ollama_url and ollama_url.strip())
+
+    ollama_model_setting = db.query(Setting).filter(Setting.key == "ollama_model").first()
+    ollama_model = json.loads(ollama_model_setting.value) if ollama_model_setting else ""
 
     ollama_ready = False
     if ollama_configured:
@@ -161,8 +186,12 @@ async def api_status(db: Session = Depends(get_db)):
 
     return {
         "entry_count": entry_count,
+        "chunk_count": chunk_count,
+        "unembedded_chunks": unembedded,
+        "db_size_bytes": db_size_bytes,
         "model": EMBEDDING_MODEL,
         "model_ready": get_model() is not None,
         "ollama_configured": ollama_configured,
         "ollama_ready": ollama_ready,
+        "ollama_model": ollama_model,
     }
