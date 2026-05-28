@@ -76,9 +76,10 @@ async def upload_file(
     for i, chunk_content in enumerate(chunks):
         db.add(Chunk(entry_id=entry.id, chunk_index=i, content=chunk_content))
 
+    tags_text = normalize_umlauts(" ".join(tag_list))
     db.execute(
-        text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,'','',:c)"),
-        {"id": entry.id, "t": normalize_umlauts(title), "c": normalize_umlauts(text_content)},
+        text("INSERT INTO entries_fts(rowid, title, question, answer, content, tags) VALUES (:id,:t,'','',:c,:tags)"),
+        {"id": entry.id, "t": normalize_umlauts(title), "c": normalize_umlauts(text_content), "tags": tags_text},
     )
     db.commit()
     enqueue_entry_chunks(entry.id)
@@ -136,9 +137,10 @@ def update_import_tags(entry_id: int, payload: _TagsPayload, db: Session = Depen
     db.query(EntryTag).filter(EntryTag.entry_id == entry_id).delete()
     for tag in tag_list:
         db.add(EntryTag(entry_id=entry_id, tag=tag))
+    tags_text = normalize_umlauts(" ".join(tag_list))
     db.execute(
-        text("UPDATE entries_fts SET title = :t WHERE rowid = :id"),
-        {"t": normalize_umlauts(entry.title), "id": entry_id},
+        text("UPDATE entries_fts SET title = :t, tags = :tags WHERE rowid = :id"),
+        {"t": normalize_umlauts(entry.title), "tags": tags_text, "id": entry_id},
     )
     db.commit()
     return {"id": entry.id, "tags": tag_list}
@@ -164,6 +166,7 @@ import numpy as np
 
 
 class BulkQAAction(_BaseModel):
+    title: str = ""
     question: str
     answer: str
     tags: list[str]
@@ -172,6 +175,7 @@ class BulkQAAction(_BaseModel):
 
 
 def _process_qa_row(
+    title: str,
     question: str,
     answer: str,
     tags: list[str],
@@ -200,8 +204,10 @@ def _process_qa_row(
                         ctr[t] += 1
                 suggested_tags = [t for t, _ in ctr.most_common(5) if t not in tags]
 
-        # Dupe check via embedding
-        emb_bytes = to_bytes(encode_query(combined))
+        # Dupe check via embedding — use question only; combined question+answer
+        # embeddings diverge from stored per-chunk vectors and yield ~0.85 cosine
+        # even for identical entries, causing misses near the threshold.
+        emb_bytes = to_bytes(encode_query(question))
         vec_rows = row_db.execute(
             text("SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH :emb ORDER BY distance LIMIT 20"),
             {"emb": emb_bytes},
@@ -234,6 +240,7 @@ def _process_qa_row(
         row_db.close()
 
     return {
+        "title": title,
         "question": question,
         "answer": answer,
         "tags": tags,
@@ -263,6 +270,7 @@ async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_d
 
     csv_rows = [
         {
+            "title": (r.get("title") or "").strip(),
             "question": (r.get("question") or "").strip(),
             "answer": (r.get("answer") or "").strip(),
             "tags": [t.strip() for t in (r.get("tags") or "").split(",") if t.strip()],
@@ -280,10 +288,11 @@ async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_d
             try:
                 result = await asyncio.to_thread(
                     _process_qa_row,
-                    row["question"], row["answer"], row["tags"], dupe_threshold,
+                    row["title"], row["question"], row["answer"], row["tags"], dupe_threshold,
                 )
             except Exception as exc:
                 result = {
+                    "title": row["title"],
                     "question": row["question"],
                     "answer": row["answer"],
                     "tags": row["tags"],
@@ -320,6 +329,8 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
         if item.action == "replace" and item.replace_id:
             entry = db.query(Entry).filter(Entry.id == item.replace_id).first()
             if entry:
+                if item.title:
+                    entry.title = item.title.strip()
                 entry.answer = item.answer
                 entry.tags = json.dumps(item.tags)
                 entry.updated_at = _dt.datetime.now(_dt.timezone.utc)
@@ -334,22 +345,30 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
                     except Exception:
                         pass
                 db.query(Chunk).filter(Chunk.entry_id == entry.id).delete()
-                db.add(Chunk(entry_id=entry.id, chunk_index=0, chunk_type="question", content=entry.question or ""))
+                _title_val = entry.title or ""
+                _idx = 0
+                if _title_val:
+                    db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="title", content=_title_val))
+                    _idx += 1
+                db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="question", content=entry.question or ""))
+                _idx += 1
                 _answer_chunks = chunk_text(item.answer or "")
                 if not _answer_chunks:
                     _answer_chunks = [item.answer or ""]
-                for i, ac in enumerate(_answer_chunks):
-                    db.add(Chunk(entry_id=entry.id, chunk_index=i + 1, chunk_type="answer", content=ac))
+                for ac in _answer_chunks:
+                    db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="answer", content=ac))
+                    _idx += 1
+                _tags_text = normalize_umlauts(" ".join(item.tags))
                 db.execute(
-                    text("UPDATE entries_fts SET answer = :a WHERE rowid = :id"),
-                    {"a": normalize_umlauts(entry.answer or ""), "id": entry.id},
+                    text("UPDATE entries_fts SET answer = :a, tags = :tags WHERE rowid = :id"),
+                    {"a": normalize_umlauts(entry.answer or ""), "tags": _tags_text, "id": entry.id},
                 )
                 enqueue_ids.append(entry.id)
                 replaced += 1
             continue
 
         # action == "import"
-        title = item.question[:120]
+        title = item.title.strip()
         entry = Entry(
             entry_type="qa",
             title=title,
@@ -363,16 +382,23 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
         for tag in item.tags:
             db.add(EntryTag(entry_id=entry.id, tag=tag))
 
-        db.add(Chunk(entry_id=entry.id, chunk_index=0, chunk_type="question", content=item.question))
+        _idx = 0
+        if title:
+            db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="title", content=title))
+            _idx += 1
+        db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="question", content=item.question))
+        _idx += 1
         answer_chunks = chunk_text(item.answer or "")
         if not answer_chunks:
             answer_chunks = [item.answer or ""]
-        for i, ac in enumerate(answer_chunks):
-            db.add(Chunk(entry_id=entry.id, chunk_index=i + 1, chunk_type="answer", content=ac))
+        for ac in answer_chunks:
+            db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="answer", content=ac))
+            _idx += 1
 
+        _tags_text = normalize_umlauts(" ".join(item.tags))
         db.execute(
-            text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,:q,:a,'')"),
-            {"id": entry.id, "t": normalize_umlauts(title), "q": normalize_umlauts(item.question), "a": normalize_umlauts(item.answer or "")},
+            text("INSERT INTO entries_fts(rowid, title, question, answer, content, tags) VALUES (:id,:t,:q,:a,'',:tags)"),
+            {"id": entry.id, "t": normalize_umlauts(title), "q": normalize_umlauts(item.question), "a": normalize_umlauts(item.answer or ""), "tags": _tags_text},
         )
         enqueue_ids.append(entry.id)
         imported += 1

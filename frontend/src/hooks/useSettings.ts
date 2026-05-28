@@ -14,8 +14,9 @@ const DEFAULTS: AppSettings = {
   branding_font: '',
   branding_logo_b64: '',
   branding_custom_css: '',
-  ollama_url: 'http://ollama:11434',
-  ollama_model: 'llama3.2:3b',
+  llm_url: 'https://api.openai.com/v1',
+  llm_model: 'gpt-5-mini',
+  llm_api_key: '',
 }
 
 export function useSettings() {
@@ -39,7 +40,7 @@ export function useSettings() {
       return s
     })
 
-  return { settings, loading, refresh, setSettings }
+  return { settings, loading, refresh }
 }
 
 function applyBranding(s: AppSettings) {

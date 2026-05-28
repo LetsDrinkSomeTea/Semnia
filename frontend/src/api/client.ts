@@ -33,7 +33,6 @@ export interface SearchRequest {
   query: string
   threshold?: number
   top_k?: number
-  alpha?: number
   tags?: string[]
   entry_type?: string
 }
@@ -41,16 +40,8 @@ export interface SearchRequest {
 export const search = (body: SearchRequest) =>
   req<SearchResult[]>('/search', { method: 'POST', body: JSON.stringify(body) })
 
-export interface FuzzySearchResponse {
-  results: SearchResult[]
-  suggestion: string | null
-}
-
-export const fuzzySearch = (body: Pick<SearchRequest, 'query' | 'top_k' | 'entry_type'>) =>
-  req<FuzzySearchResponse>('/search/fuzzy', { method: 'POST', body: JSON.stringify(body) })
-
 export function summarizeStream(
-  entry_ids: number[],
+  sources: { entry_id: number; chunk_id?: number | null }[],
   query: string,
   onToken: (token: string) => void,
   onDone: () => void,
@@ -60,7 +51,7 @@ export function summarizeStream(
   fetch(BASE + '/search/summarize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ entry_ids, query }),
+    body: JSON.stringify({ sources, query }),
     signal,
   })
     .then(async (resp) => {
@@ -114,13 +105,19 @@ export const listEntries = (params: {
 
 export const getEntry = (id: number) => req<Entry>(`/entries/${id}`)
 
-export const createQA = (body: { question: string; answer: string; tags: string[] }) =>
+export const createQA = (body: { title?: string; question: string; answer: string; tags: string[] }) =>
   req<Entry>('/entries', { method: 'POST', body: JSON.stringify(body) })
 
 export const updateQA = (
   id: number,
-  body: { question?: string; answer?: string; tags?: string[] },
+  body: { title?: string; question?: string; answer?: string; tags?: string[] },
 ) => req<Entry>(`/entries/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+
+export const createDoc = (body: { title?: string; content: string; tags: string[] }) =>
+  req<Entry>('/entries/document', { method: 'POST', body: JSON.stringify(body) })
+
+export const updateDoc = (id: number, body: { title?: string; content?: string; tags?: string[] }) =>
+  req<Entry>(`/entries/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 
 export const deleteEntry = (id: number) =>
   fetch(BASE + `/entries/${id}`, { method: 'DELETE' })
@@ -133,7 +130,7 @@ export const checkDuplicate = (question: string, answer: string) =>
 
 // ── Tags ──────────────────────────────────────────────────────────────────────
 
-export const listTags = () => req<Tag[]>('/tags')
+export const listTags = () => req<{ total: number; tags: Tag[] }>('/tags')
 
 export const suggestTags = (text: string) =>
   req<string[]>('/tags/suggest', { method: 'POST', body: JSON.stringify({ text }) })
@@ -155,6 +152,7 @@ export const listImports = (page = 1) =>
   req<PaginatedResponse<ImportItem>>(`/import?page=${page}`)
 
 export interface QABulkRow {
+  title: string
   question: string
   answer: string
   tags: string[]
@@ -209,6 +207,7 @@ export function parseQACsvStream(
 }
 
 export interface QABulkAction {
+  title: string
   question: string
   answer: string
   tags: string[]
@@ -224,6 +223,12 @@ export const confirmQAImport = (items: QABulkAction[]) =>
 
 export const getImportStatus = (entry_id: number) =>
   req<{ chunk_count: number; embedded_count: number; done: boolean }>(`/import/${entry_id}/status`)
+
+export const updateImportTags = (entry_id: number, tags: string[]) =>
+  req<{ id: number; tags: string[] }>(`/import/${entry_id}/tags`, {
+    method: 'PUT',
+    body: JSON.stringify({ tags }),
+  })
 
 export const deleteImport = (entry_id: number) =>
   fetch(BASE + `/import/${entry_id}`, { method: 'DELETE' })

@@ -42,10 +42,10 @@ export default function System(_props: Props) {
       sub: status?.model,
     },
     {
-      label: 'Ollama',
-      state: !status?.ollama_configured ? 'warn' : status.ollama_ready ? 'ok' : 'err',
-      value: !status?.ollama_configured ? 'Nicht konfiguriert' : status.ollama_ready ? 'Erreichbar' : 'Nicht erreichbar',
-      sub: status?.ollama_model || undefined,
+      label: 'LLM',
+      state: !status ? 'warn' : status.llm_status === 'ready' ? 'ok' : status.llm_status === 'error' ? 'err' : 'warn',
+      value: !status ? '—' : status.llm_status === 'ready' ? 'Erreichbar' : status.llm_status === 'error' ? 'Fehler' : 'Nicht konfiguriert',
+      sub: status?.llm_model || undefined,
     },
     {
       label: 'Datenbank',
@@ -73,7 +73,6 @@ export default function System(_props: Props) {
       rows: [
         { label: 'Ähnlichkeitsschwelle', value: settings.search_threshold?.toFixed(2) ?? '—', env: 'SEARCH_THRESHOLD' },
         { label: 'Duplikat-Schwelle', value: settings.dupe_threshold?.toFixed(2) ?? '—', env: 'DUPE_THRESHOLD' },
-        { label: 'Hybrid-Alpha (α)', value: settings.hybrid_alpha?.toFixed(2) ?? '—', env: 'HYBRID_ALPHA' },
         { label: 'Top-K Ergebnisse', value: String(settings.top_k ?? '—'), env: 'TOP_K' },
       ],
     },
@@ -85,10 +84,11 @@ export default function System(_props: Props) {
       ],
     },
     {
-      label: 'Ollama',
+      label: 'LLM',
       rows: [
-        { label: 'Ollama URL', value: settings.ollama_url || '—', env: 'OLLAMA_URL' },
-        { label: 'Ollama Modell', value: settings.ollama_model || '—', env: 'OLLAMA_MODEL' },
+        { label: 'LLM URL', value: settings.llm_url || '—', env: 'LLM_URL' },
+        { label: 'LLM Modell', value: settings.llm_model || '—', env: 'LLM_MODEL' },
+        { label: 'API Key', value: settings.llm_api_key ? '••••••••' : '—', env: 'LLM_API_KEY' },
       ],
     },
   ]

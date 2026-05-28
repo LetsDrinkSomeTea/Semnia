@@ -32,7 +32,7 @@ export default function DupeWarning({ candidates, checking, hasContent }: Props)
             onClick={() => navigate(`/entries/${c.id}`)}
             role="button"
           >
-            <div className="q">{c.title}</div>
+            <div className="q">{c.title || c.question || '—'}</div>
             <div className="sim">Ähnlichkeit: {Math.round(c.score * 100)}%</div>
           </div>
         ))}

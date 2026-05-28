@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { search, fuzzySearch, listTags, summarizeStream } from '../api/client'
-import type { SearchResult, Tag, AppSettings } from '../types'
+import { search, listTags, summarizeStream, listEntries } from '../api/client'
+import type { SearchResult, Tag, AppSettings, Entry } from '../types'
 import ScoreBar from '../components/ScoreBar'
 import EntryTypeBadge from '../components/EntryTypeBadge'
 
@@ -12,7 +12,16 @@ interface Props {
 }
 
 type TypeFilter = '' | 'qa' | 'document'
-type MethodFilter = '' | 'semantic' | 'bm25'
+type SortMode = 'updated' | 'calls'
+
+// ── Citation helpers ───────────────────────────────────────────────────────────
+
+function extractCitedNums(text: string): Set<number> {
+  const cited = new Set<number>()
+  for (const m of text.matchAll(/\[#?([\d,\s#]+)\]/g))
+    m[1].split(/[,\s#]+/).map(Number).filter(Boolean).forEach((n) => cited.add(n))
+  return cited
+}
 
 // ── Citation rendering ─────────────────────────────────────────────────────────
 
@@ -21,7 +30,6 @@ function renderWithCitations(
   sources: SearchResult[],
   onCite: (id: number) => void,
 ): React.ReactNode[] {
-  // Match [1], [#1], [1,2], [#1,#2] — models aren't always consistent
   const parts = text.split(/(\[#?\d+(?:[,\s#]*#?\d+)*\])/g)
   return parts.map((part, i) => {
     const match = part.match(/^\[#?([\d,\s#]+)\]$/)
@@ -78,28 +86,21 @@ function renderSnippet(snippet: string, spans: number[][]): React.ReactNode {
   return renderHighlighted(snippet, spans)
 }
 
-/** Highlight query words in title — only for non-semantic matches */
-function renderTitle(title: string, query: string, matchedBy?: string): React.ReactNode {
-  if (!matchedBy || matchedBy === 'semantic') return title
-  const words = query.split(/\s+/).filter(w => w.length > 2).map(w => w.toLowerCase())
-  const spans = computeSpans(title, words)
-  return renderHighlighted(title, spans)
+// ── Field chip ─────────────────────────────────────────────────────────────────
+
+const FIELD_LABELS: Record<string, string> = {
+  question: 'Frage',
+  answer: 'Antwort',
+  title: 'Titel',
+  tag: 'Tag',
+  content: 'Inhalt',
 }
 
-// ── Match badge ────────────────────────────────────────────────────────────────
-
-const MATCH_LABELS: Record<string, string> = {
-  semantic: 'Semantik',
-  bm25: 'Volltext',
-  both: 'Semantik + Volltext',
-  fuzzy: 'Fuzzy',
-}
-
-function MatchBadge({ matched_by }: { matched_by?: string }) {
-  if (!matched_by) return null
-  const label = MATCH_LABELS[matched_by]
+function FieldChip({ chunk_type }: { chunk_type?: string }) {
+  if (!chunk_type) return null
+  const label = FIELD_LABELS[chunk_type]
   if (!label) return null
-  return <span className={`match-badge match-badge--${matched_by}`}>{label}</span>
+  return <span className={`field-chip field-chip--${chunk_type}`}>{label}</span>
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -108,15 +109,16 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
   const navigate = useNavigate()
   const [query, setQuery] = useState(() => sessionStorage.getItem('wdb-q') || '')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('')
-  const [methodFilter, setMethodFilter] = useState<MethodFilter>('')
   const [tagFilter, setTagFilter] = useState<string | null>(null)
   const [threshold, setThreshold] = useState(settings.search_threshold)
+  const [sort, setSort] = useState<SortMode>('updated')
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
-  const [isFuzzy, setIsFuzzy] = useState(false)
-  const [fuzzySuggestion, setFuzzySuggestion] = useState<string | null>(null)
   const [tookMs, setTookMs] = useState(0)
+  const [browseEntries, setBrowseEntries] = useState<Entry[]>([])
+  const [browseLoading, setBrowseLoading] = useState(false)
   const [tags, setTags] = useState<Tag[]>([])
+  const [totalEntries, setTotalEntries] = useState(0)
   const [llmAnswer, setLlmAnswer] = useState<string | null>(null)
   const [llmSources, setLlmSources] = useState<SearchResult[]>([])
   const [llmBusy, setLlmBusy] = useState(false)
@@ -125,40 +127,26 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => setThreshold(settings.search_threshold), [settings.search_threshold])
-  useEffect(() => { listTags().then(setTags).catch(() => { }) }, [])
+  useEffect(() => { listTags().then(({ tags, total }) => { setTags(tags); setTotalEntries(total) }).catch(() => { }) }, [])
   useEffect(() => { inputRef.current?.focus() }, [])
 
   const runSearch = useCallback(
     async (q: string) => {
       sessionStorage.setItem('wdb-q', q)
-      if (!q.trim()) { setResults([]); setLlmAnswer(null); setIsFuzzy(false); setFuzzySuggestion(null); return }
+      if (!q.trim()) { setResults([]); setLlmAnswer(null); return }
       abortRef.current?.abort()
       abortRef.current = new AbortController()
       setLoading(true)
-      setIsFuzzy(false)
-      setFuzzySuggestion(null)
       const t0 = performance.now()
       try {
         const r = await search({
           query: q,
           threshold,
           top_k: settings.top_k,
-          alpha: settings.hybrid_alpha,
           tags: tagFilter ? [tagFilter] : undefined,
           entry_type: typeFilter || undefined,
         })
-        if (r.length === 0) {
-          const { results: fuzzy, suggestion } = await fuzzySearch({
-            query: q,
-            top_k: settings.top_k,
-            entry_type: typeFilter || undefined,
-          })
-          setResults(fuzzy)
-          setIsFuzzy(fuzzy.length > 0)
-          setFuzzySuggestion(suggestion)
-        } else {
-          setResults(r)
-        }
+        setResults(r)
         setTookMs(performance.now() - t0)
       } catch (e) {
         if ((e as Error).name !== 'AbortError') toast('Suchfehler', 'error')
@@ -166,13 +154,27 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
         setLoading(false)
       }
     },
-    [threshold, tagFilter, typeFilter, settings.top_k, settings.hybrid_alpha, toast],
+    [threshold, tagFilter, typeFilter, settings.top_k, toast],
   )
 
   useEffect(() => { runSearch(query) }, [query, runSearch])
-  const onSubmit = (e: React.FormEvent) => { e.preventDefault(); runSearch(query) }
 
+  useEffect(() => {
+    if (query.trim()) return
+    setBrowseLoading(true)
+    listEntries({ per_page: 40, tag: tagFilter ?? undefined, entry_type: typeFilter || undefined, sort })
+      .then((r) => setBrowseEntries(r.items))
+      .catch(() => toast('Fehler beim Laden', 'error'))
+      .finally(() => setBrowseLoading(false))
+  }, [query, tagFilter, typeFilter, sort])
+
+  const onSubmit = (e: React.FormEvent) => { e.preventDefault(); runSearch(query) }
   const llmAbortRef = useRef<AbortController | null>(null)
+
+  const formatMeta = (e: Entry): string => {
+    if (sort === 'calls') return e.call_count > 0 ? `${e.call_count}×` : '—'
+    return e.updated_at ? new Date(e.updated_at).toLocaleDateString('de-DE') : '—'
+  }
 
   const askLlm = () => {
     if (llmBusy) {
@@ -189,7 +191,7 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
     const ctrl = new AbortController()
     llmAbortRef.current = ctrl
     summarizeStream(
-      sources.map((r) => r.id),
+      sources.map((r) => ({ entry_id: r.id, chunk_id: r.matched_chunk_id })),
       query,
       (token) => setLlmAnswer((prev) => (prev ?? '') + token),
       () => { setLlmBusy(false); llmAbortRef.current = null },
@@ -203,18 +205,15 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
       query,
       matched_by: r.matched_by,
       matched_chunk_type: r.matched_chunk_type,
+      snippet: r.snippet,
     }))
     navigate(`/entries/${r.id}`)
   }
 
-  const displayedResults = methodFilter
-    ? results.filter(r => r.matched_by === methodFilter || r.matched_by === 'both')
-    : results
-
-  const activeFilters = (tagFilter ? 1 : 0) + (typeFilter ? 1 : 0) + (methodFilter ? 1 : 0)
+  const activeFilters = (tagFilter ? 1 : 0) + (typeFilter ? 1 : 0)
   const noResults = query.trim() && !loading && results.length === 0
-  const noDisplayed = query.trim() && !loading && results.length > 0 && displayedResults.length === 0
   const sliderStyle = { '--p': `${threshold * 100}%` } as React.CSSProperties
+  const isSearchMode = !!query.trim()
 
   const sidebar = (
     <>
@@ -229,38 +228,29 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
         </div>
       </div>
 
-      <div>
-        <h5>Suchmethode</h5>
-        <div className="mode-track">
-          {([['', 'Alle'], ['semantic', 'Semantik'], ['bm25', 'Volltext']] as [MethodFilter, string][]).map(([m, label]) => (
-            <button key={m} className={methodFilter === m ? 'on' : ''} onClick={() => { setMethodFilter(m); setFilterOpen(false) }}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <h5>Schwelle</h5>
-        <div className="threshold-slider" style={sliderStyle}>
-          <div className="track" onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect()
-            setThreshold(Math.round(((e.clientX - rect.left) / rect.width) * 100) / 100)
-          }}>
-            <div className="fill" /><div className="knob" />
-          </div>
-          <div className="label">
-            <span>0</span><span className="v">{threshold.toFixed(2)}</span><span>1</span>
+      {isSearchMode && (
+        <div>
+          <h5>Schwelle</h5>
+          <div className="threshold-slider" style={sliderStyle}>
+            <div className="track" onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              setThreshold(Math.round(((e.clientX - rect.left) / rect.width) * 100) / 100)
+            }}>
+              <div className="fill" /><div className="knob" />
+            </div>
+            <div className="label">
+              <span>0</span><span className="v">{threshold.toFixed(2)}</span><span>1</span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div>
         <h5>Tags</h5>
         <div className="tag-list">
           <div className={`tag-row ${tagFilter === null ? 'on' : ''}`} onClick={() => { setTagFilter(null); setFilterOpen(false) }}>
             <span>Alle</span>
-            <span className="count">{tags.reduce((s, t) => s + t.count, 0)}</span>
+            <span className="count">{totalEntries}</span>
           </div>
           {tags.map((t) => (
             <div key={t.name} className={`tag-row ${tagFilter === t.name ? 'on' : ''}`}
@@ -299,7 +289,7 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
             <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)}
               placeholder="Semnia durchsuchen…" autoComplete="off" spellCheck={false} />
             {query && (
-              <button type="button" className="clear" onClick={() => { setQuery(''); setResults([]); setLlmAnswer(null); setIsFuzzy(false); setFuzzySuggestion(null) }}>×</button>
+              <button type="button" className="clear" onClick={() => { setQuery(''); setResults([]); setLlmAnswer(null) }}>×</button>
             )}
             <button type="submit" className="submit" aria-label="Suchen">
               <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
@@ -316,28 +306,38 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
           Filter{activeFilters > 0 ? ` (${activeFilters})` : ''}
         </button>
 
-        {query.trim() && (
-          <div className="meta-line">
-            <span>
-              {loading ? 'Suche…'
-                : `${displayedResults.length} Ergebnis${displayedResults.length !== 1 ? 'se' : ''} · ${Math.round(tookMs)}ms`}
-            </span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {tagFilter && (
-                <span className="filters">
-                  <button className="filter-chip" onClick={() => setTagFilter(null)}>
-                    {tagFilter} <span className="x">×</span>
+        <div className="meta-line">
+          {!isSearchMode ? (
+            <>
+              <span>{browseLoading ? '…' : `${browseEntries.length} Einträge`}</span>
+              <div className="sort-tabs">
+                <button className={sort === 'updated' ? 'on' : ''} onClick={() => setSort('updated')}>Zuletzt</button>
+                <button className={sort === 'calls' ? 'on' : ''} onClick={() => setSort('calls')}>Beliebt</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <span>
+                {loading ? 'Suche…'
+                  : `${results.length} Ergebnis${results.length !== 1 ? 'se' : ''} · ${Math.round(tookMs)}ms`}
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {tagFilter && (
+                  <span className="filters">
+                    <button className="filter-chip" onClick={() => setTagFilter(null)}>
+                      {tagFilter} <span className="x">×</span>
+                    </button>
+                  </span>
+                )}
+                {ollamaReady && results.length > 0 && (
+                  <button className="btn btn--ghost btn--sm" onClick={askLlm}>
+                    {llmBusy ? '✕ Abbrechen' : '✦ KI-Zusammenfassung'}
                   </button>
-                </span>
-              )}
-              {ollamaReady && displayedResults.length > 0 && (
-                <button className="btn btn--ghost btn--sm" onClick={askLlm}>
-                  {llmBusy ? '✕ Abbrechen' : '✦ KI-Zusammenfassung'}
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
         {llmAnswer !== null && (
           <div className="llm-card">
@@ -349,91 +349,121 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
               {renderWithCitations(llmAnswer, llmSources, (id) => navigate(`/entries/${id}`))}
               {llmBusy && <span className="llm-cursor" />}
             </p>
-            {!llmBusy && llmSources.length > 0 && (
-              <div className="llm-sources">
-                {llmSources.map((s, i) => (
-                  <button key={s.id} className="llm-source-item" onClick={() => navigate(`/entries/${s.id}`)}>
-                    <span className="llm-source-n">{i + 1}</span>
-                    <span className="llm-source-title">{s.title}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+            {!llmBusy && llmSources.length > 0 && (() => {
+              const cited = extractCitedNums(llmAnswer ?? '')
+              const usedSources = llmSources
+                .map((s, i) => ({ s, n: i + 1 }))
+                .filter(({ n }) => cited.size === 0 || cited.has(n))
+              return usedSources.length > 0 ? (
+                <div className="llm-sources">
+                  {usedSources.map(({ s, n }) => (
+                    <button key={s.id} className="llm-source-item" onClick={() => navigate(`/entries/${s.id}`)}>
+                      <span className="llm-source-n">{n}</span>
+                      <span className="llm-source-title">{s.title}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null
+            })()}
           </div>
         )}
 
-        {query.trim() ? (
+        {!isSearchMode ? (
+          browseLoading ? (
+            <div className="empty"><p>Lädt…</p></div>
+          ) : browseEntries.length === 0 ? (
+            <div className="empty">
+              <h3>Keine Einträge</h3>
+              <p>{tagFilter || typeFilter ? 'Keine Einträge für diesen Filter.' : 'Noch keine Einträge vorhanden.'}</p>
+            </div>
+          ) : (
+            <div className="results">
+              {browseEntries.map((e) => (
+                <article key={e.id} className="result result--browse" onClick={() => navigate(`/entries/${e.id}`)} role="button">
+                  <div>
+                    <h3 className="q">{e.title || e.question || e.content || ''}</h3>
+                    <div className="meta-row">
+                      <div className="meta-system">
+                        <EntryTypeBadge type={e.entry_type} />
+                      </div>
+                      {e.tags.length > 0 && (
+                        <div className="meta-tags">
+                          {e.tags.map((t) => (
+                            <span className="chip" key={t} role="button"
+                              onClick={(ev) => { ev.stopPropagation(); setTagFilter(t) }}>
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="right-side"><span>{formatMeta(e)}</span></div>
+                </article>
+              ))}
+            </div>
+          )
+        ) : (
           noResults ? (
             <div className="empty">
               <h3>Keine Ergebnisse</h3>
-              <p>Auch die Fuzzy-Suche liefert keine Treffer. Versuche andere Begriffe.</p>
+              <p>Versuche andere oder allgemeinere Begriffe.</p>
+              <button
+                className="btn"
+                onClick={() => navigate(`/editor/new?title=${encodeURIComponent(query)}`)}
+              >
+                + Neuen Eintrag erstellen
+              </button>
             </div>
-          ) : noDisplayed ? (
-            <div className="empty">
-              <h3>Keine Treffer mit diesem Filter</h3>
-              <p>
-                <button className="btn btn--ghost btn--sm" onClick={() => setMethodFilter('')}>Filter zurücksetzen</button>
-              </p>
-            </div>
-          ) : !loading && displayedResults.length > 0 ? (
-            <>
-              {isFuzzy && (
-                <div className="fuzzy-hint">
-                  {fuzzySuggestion ? (
-                    <>
-                      Meintest du{' '}
-                      <button className="suggest-correction" onClick={() => setQuery(fuzzySuggestion)}>
-                        {fuzzySuggestion}
-                      </button>
-                      ? — ähnliche Ergebnisse:
-                    </>
-                  ) : (
-                    'Kein exakter Treffer — ähnliche Ergebnisse (Fuzzy-Suche):'
-                  )}
-                </div>
-              )}
-              <div className="results">
-                {displayedResults.map((r) => (
+          ) : !loading && results.length > 0 ? (
+            <div className="results">
+              {results.map((r) => {
+                const showContext = r.entry_type === 'qa'
+                  && r.question
+                  && r.matched_chunk_type !== 'question'
+                  && r.matched_chunk_type !== 'title'
+                return (
                   <article key={r.id} className="result" onClick={() => handleResultClick(r)} role="button">
                     <ScoreBar score={r.score} />
                     <div>
-                      <h3 className="q">{renderTitle(r.title, query, r.matched_by)}</h3>
-                      <p className="snippet">{renderSnippet(r.snippet, r.highlight_spans)}</p>
+                      <h3 className="q">{r.title}</h3>
+                      {showContext && (
+                        <p className="result-context">
+                          {(r.question!.length > 100 ? r.question!.slice(0, 100) + '…' : r.question)}
+                        </p>
+                      )}
+                      {r.snippet && (
+                        <p className="snippet">
+                          {renderSnippet(r.snippet, r.highlight_spans)}
+                        </p>
+                      )}
                       <div className="meta-row">
-                        <EntryTypeBadge type={r.entry_type} />
-                        <MatchBadge matched_by={r.matched_by} />
-                        {r.tags.map((t) => <span className="chip" key={t}>{t}</span>)}
+                        <div className="meta-system">
+                          <EntryTypeBadge type={r.entry_type} />
+                          <FieldChip chunk_type={r.matched_chunk_type} />
+                        </div>
+                        {r.tags.length > 0 && (
+                          <div className="meta-tags">
+                            {r.tags.map((t) => (
+                              <span
+                                className="chip"
+                                key={t}
+                                role="button"
+                                onClick={(e) => { e.stopPropagation(); setTagFilter(t) }}
+                              >
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="right-side"><span>{r.call_count}×</span></div>
                   </article>
-                ))}
-              </div>
-            </>
-          ) : null
-        ) : (
-          <div className="empty-search">
-            <div className="empty-search-head">
-              <h2>Was möchtest du wissen?</h2>
-              <p>Suche mit natürlicher Sprache. <em>Semantische Bedeutung</em> und <em>Volltext-Suche</em> arbeiten gemeinsam am Ergebnis.</p>
+                )
+              })}
             </div>
-            {tags.length > 0 && (
-              <>
-                <p className="section-h">Themen</p>
-                <div className="suggest-grid">
-                  {tags.slice(0, 8).map((t) => (
-                    <button key={t.name} className="suggest" onClick={() => { setTagFilter(t.name); setQuery(t.name) }}>
-                      <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
-                        <line x1="7" y1="7" x2="7.01" y2="7" />
-                      </svg>
-                      {t.name} ({t.count})
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+          ) : null
         )}
       </main>
     </div>

@@ -3,6 +3,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.embeddings.model import encode_query, to_bytes
 
+_CHUNK_BOOST: dict[str, float] = {
+    "title": 1.3,
+    "question": 1.15,
+    "answer": 1.0,
+    "content": 1.0,
+}
+
 
 def semantic_search(
     db: Session,
@@ -11,7 +18,7 @@ def semantic_search(
     entry_type: str | None = None,
     tag_filter: list[str] | None = None,
 ) -> list[tuple[int, float, int]]:
-    """Returns (entry_id, cosine_similarity, best_chunk_id) sorted by similarity desc."""
+    """Returns (entry_id, boosted_cosine_similarity, best_chunk_id) sorted by similarity desc."""
     emb = encode_query(query)
     emb_bytes = to_bytes(emb)
 
@@ -25,12 +32,11 @@ def semantic_search(
 
     from app.db.models import Chunk
     chunk_ids = [int(r[0]) for r in rows]
-    chunk_to_entry = {
-        c.id: c.entry_id
-        for c in db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all()
-    }
+    chunks_data = db.query(Chunk.id, Chunk.entry_id, Chunk.chunk_type).filter(Chunk.id.in_(chunk_ids)).all()
+    chunk_to_entry = {c.id: c.entry_id for c in chunks_data}
+    chunk_type_lookup = {c.id: c.chunk_type for c in chunks_data}
 
-    # Deduplicate by entry_id, keep best cosine score and its chunk_id
+    # Deduplicate by entry_id, keep best boosted score and its chunk_id
     best: dict[int, float] = {}
     best_chunk: dict[int, int] = {}
     for rowid, distance in rows:
@@ -39,8 +45,11 @@ def semantic_search(
         if entry_id is None:
             continue
         cosine_sim = float(np.clip(1.0 - (distance ** 2) / 2.0, 0.0, 1.0))
-        if entry_id not in best or cosine_sim > best[entry_id]:
-            best[entry_id] = cosine_sim
+        chunk_type = chunk_type_lookup.get(chunk_id, "content")
+        boosted = min(cosine_sim * _CHUNK_BOOST.get(chunk_type, 1.0), 1.0)
+        if entry_id not in best or boosted > best[entry_id]:
+            best[entry_id] = boosted
+        if entry_id not in best_chunk:
             best_chunk[entry_id] = chunk_id
 
     results = sorted(

@@ -109,12 +109,7 @@ def _enqueue_missing_embeddings() -> None:
             return
         already = {
             row[0]
-            for row in db.execute(
-                text("SELECT rowid FROM chunks_vec WHERE rowid IN (:ids)").bindparams(
-                    sqlalchemy.bindparam("ids", expanding=True)
-                ),
-                {"ids": all_ids},
-            ).fetchall()
+            for row in db.execute(text("SELECT rowid FROM chunks_vec")).fetchall()
         }
         missing = [i for i in all_ids if i not in already]
         for cid in missing:
@@ -211,21 +206,25 @@ async def api_status(db: Session = Depends(get_db)):
     except OSError:
         pass
 
-    ollama_setting = db.query(Setting).filter(Setting.key == "ollama_url").first()
-    ollama_url = json.loads(ollama_setting.value) if ollama_setting else ""
-    ollama_configured = bool(ollama_url and ollama_url.strip())
+    llm_url_setting = db.query(Setting).filter(Setting.key == "llm_url").first()
+    llm_url = json.loads(llm_url_setting.value) if llm_url_setting else "http://ollama:11434/v1"
 
-    ollama_model_setting = db.query(Setting).filter(Setting.key == "ollama_model").first()
-    ollama_model = json.loads(ollama_model_setting.value) if ollama_model_setting else ""
+    llm_api_key_setting = db.query(Setting).filter(Setting.key == "llm_api_key").first()
+    llm_api_key = json.loads(llm_api_key_setting.value) if llm_api_key_setting else ""
 
-    ollama_ready = False
-    if ollama_configured:
-        try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                r = await client.get(f"{ollama_url}/api/tags")
-                ollama_ready = r.status_code == 200
-        except Exception:
-            pass
+    llm_model_setting = db.query(Setting).filter(Setting.key == "llm_model").first()
+    llm_model = json.loads(llm_model_setting.value) if llm_model_setting else ""
+
+    llm_status = "inactive"
+    try:
+        headers = {"Authorization": f"Bearer {llm_api_key}"} if llm_api_key else {}
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get(f"{llm_url}/models", headers=headers)
+            llm_status = "ready" if r.status_code == 200 else "error"
+    except (httpx.ConnectError, httpx.TimeoutException):
+        llm_status = "inactive"
+    except Exception:
+        llm_status = "error"
 
     return {
         "entry_count": entry_count,
@@ -235,9 +234,8 @@ async def api_status(db: Session = Depends(get_db)):
         "db_size_bytes": db_size_bytes,
         "model": EMBEDDING_MODEL,
         "model_ready": get_model() is not None,
-        "ollama_configured": ollama_configured,
-        "ollama_ready": ollama_ready,
-        "ollama_model": ollama_model,
+        "llm_status": llm_status,
+        "llm_model": llm_model,
     }
 
 

@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getEntry, deleteEntry } from '../api/client'
+import { getEntry, deleteEntry, updateImportTags, listTags } from '../api/client'
 import type { Entry } from '../types'
 import EntryTypeBadge from '../components/EntryTypeBadge'
 import EntryRow from '../components/EntryRow'
+import TagInput from '../components/TagInput'
+import { useConfirm } from '../hooks/useConfirm'
 
 interface Props {
   toast: (msg: string, kind?: 'success' | 'error' | 'info') => void
@@ -13,63 +15,49 @@ interface HlCtx {
   query: string
   matched_by?: string
   matched_chunk_type?: string
+  snippet?: string
 }
 
-function computeSpans(text: string, words: string[]): number[][] {
-  const spans: number[][] = []
-  const low = text.toLowerCase()
-  for (const w of words) {
-    let pos = 0
-    while (true) {
-      const idx = low.indexOf(w, pos)
-      if (idx === -1) break
-      spans.push([idx, idx + w.length])
-      pos = idx + 1
-    }
-  }
-  return spans
+function findChunkRange(text: string, snippet: string): [number, number] | null {
+  const inner = snippet.replace(/^…/, '').replace(/…$/, '')
+  if (inner.length < 5) return null
+  const idx = text.indexOf(inner)
+  if (idx === -1) return null
+  return [idx, idx + inner.length]
 }
 
-function renderWithHighlight(text: string, query: string, firstMarkRef: React.MutableRefObject<Element | null>): React.ReactNode {
-  const words = query.split(/\s+/).filter(w => w.length > 2).map(w => w.toLowerCase())
-  const spans = computeSpans(text, words)
-  if (!spans.length) return text
-
-  const parts: React.ReactNode[] = []
-  let cursor = 0
-  let firstSet = false
-  const sorted = [...spans].sort((a, b) => a[0] - b[0])
-  for (const [s, e] of sorted) {
-    if (s < cursor) continue
-    if (s > cursor) parts.push(text.slice(cursor, s))
-    const isFirst = !firstSet
-    firstSet = true
-    parts.push(
-      <mark
-        key={s}
-        ref={isFirst ? (el) => { firstMarkRef.current = el } : undefined}
-      >
-        {text.slice(s, e)}
-      </mark>
-    )
-    cursor = e
-  }
-  if (cursor < text.length) parts.push(text.slice(cursor))
-  return <>{parts}</>
+function renderWithChunkHighlight(
+  text: string,
+  snippet: string,
+  firstMarkRef: React.MutableRefObject<Element | null>,
+): React.ReactNode {
+  const range = findChunkRange(text, snippet)
+  if (!range) return text
+  const [s, e] = range
+  return (
+    <>
+      {s > 0 && text.slice(0, s)}
+      <mark ref={(el) => { firstMarkRef.current = el }}>{text.slice(s, e)}</mark>
+      {e < text.length && text.slice(e)}
+    </>
+  )
 }
 
 export default function Detail({ toast }: Props) {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { confirmDialog, ask } = useConfirm()
   const [entry, setEntry] = useState<Entry | null>(null)
   const [loading, setLoading] = useState(true)
   const [hlCtx, setHlCtx] = useState<HlCtx | null>(null)
   const firstMarkRef = useRef<Element | null>(null)
+  const [docTags, setDocTags] = useState<string[]>([])
+  const [allTags, setAllTags] = useState<string[]>([])
 
   useEffect(() => {
     if (!id) return
     const stored = sessionStorage.getItem(`highlight-${id}`)
-    if (stored) { try { setHlCtx(JSON.parse(stored)) } catch {} }
+    if (stored) { try { setHlCtx(JSON.parse(stored)) } catch { } }
     getEntry(Number(id))
       .then(setEntry)
       .catch(() => toast('Eintrag nicht gefunden', 'error'))
@@ -82,8 +70,20 @@ export default function Detail({ toast }: Props) {
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [entry, hlCtx])
 
+  useEffect(() => {
+    if (!entry || entry.entry_type === 'qa') return
+    setDocTags(entry.tags)
+    listTags().then(({ tags }) => setAllTags(tags.map((t) => t.name))).catch(() => {})
+  }, [entry])
+
+  const handleDocTagChange = async (tags: string[]) => {
+    if (!entry) return
+    setDocTags(tags)
+    await updateImportTags(entry.id, tags).catch(() => toast('Tags konnten nicht gespeichert werden', 'error'))
+  }
+
   const handleDelete = async () => {
-    if (!entry || !confirm('Eintrag wirklich löschen?')) return
+    if (!entry || !await ask('Eintrag wirklich löschen?')) return
     await deleteEntry(entry.id)
     toast('Eintrag gelöscht', 'success')
     navigate(-1)
@@ -93,13 +93,12 @@ export default function Detail({ toast }: Props) {
   if (!entry) return <main className="pb-main"><div className="empty"><h3>Nicht gefunden</h3></div></main>
 
   const isQA = entry.entry_type === 'qa'
-  const shouldHighlight = hlCtx && hlCtx.matched_by && hlCtx.matched_by !== 'semantic'
   const mct = hlCtx?.matched_chunk_type
+  const snippet = hlCtx?.snippet
 
   const hl = (text: string | null) => {
-    if (!text) return null
-    if (!shouldHighlight || !hlCtx) return text
-    return renderWithHighlight(text, hlCtx.query, firstMarkRef)
+    if (!text || !snippet) return text
+    return renderWithChunkHighlight(text, snippet, firstMarkRef)
   }
 
   return (
@@ -110,14 +109,18 @@ export default function Detail({ toast }: Props) {
         <div>
           <div className="detail-meta-row" style={{ marginBottom: 10 }}>
             <EntryTypeBadge type={entry.entry_type} />
-            {entry.tags.map((t) => (
-              <span className="chip" key={t}>{t}</span>
-            ))}
+            {isQA ? (
+              entry.tags.map((t) => (
+                <span className="chip" key={t}>{t}</span>
+              ))
+            ) : (
+              <TagInput tags={docTags} onChange={handleDocTagChange} suggestions={allTags} />
+            )}
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, marginLeft: 4 }}>
               {entry.call_count}× aufgerufen
             </span>
           </div>
-          <h1>{entry.title}</h1>
+          <h1>{mct === 'title' ? hl(entry.title || entry.question) : (entry.title || entry.question)}</h1>
         </div>
 
         {isQA ? (
@@ -149,11 +152,9 @@ export default function Detail({ toast }: Props) {
         )}
 
         <div className="detail-actions">
-          {isQA && (
-            <button className="btn btn--ghost" onClick={() => navigate(`/editor/${entry.id}`)}>
-              Bearbeiten
-            </button>
-          )}
+          <button className="btn btn--ghost" onClick={() => navigate(`/editor/${entry.id}`)}>
+            Bearbeiten
+          </button>
           <button className="btn btn--ghost" onClick={handleDelete} style={{ marginLeft: 'auto' }}>
             Löschen
           </button>
@@ -167,7 +168,7 @@ export default function Detail({ toast }: Props) {
             {entry.related.map((r) => (
               <EntryRow
                 key={r.id}
-                title={r.title}
+                title={r.title || r.question || ''}
                 entry_type={r.entry_type}
                 onClick={() => navigate(`/entries/${r.id}`)}
               />
@@ -175,6 +176,7 @@ export default function Detail({ toast }: Props) {
           </div>
         </div>
       )}
+      {confirmDialog}
     </main>
   )
 }

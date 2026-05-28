@@ -8,7 +8,7 @@ export default function ScoreBar({ score }: Props) {
     <div className="score-block">
       <span className="score-num">{pct}</span>
       <div className="score-meter" style={{ '--m': `${pct}%` } as React.CSSProperties} />
-      <span className="score-label">Match</span>
+      <span className="score-label">Relevanz</span>
     </div>
   )
 }

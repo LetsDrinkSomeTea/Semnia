@@ -15,15 +15,24 @@ router = APIRouter(prefix="/api/entries", tags=["entries"])
 
 
 class QACreate(BaseModel):
+    title: str = ""
     question: str
     answer: str
     tags: list[str] = []
 
 
 class QAUpdate(BaseModel):
+    title: str | None = None
     question: str | None = None
     answer: str | None = None
+    content: str | None = None
     tags: list[str] | None = None
+
+
+class DocCreate(BaseModel):
+    title: str = ""
+    content: str
+    tags: list[str] = []
 
 
 class DupeCheckRequest(BaseModel):
@@ -33,15 +42,17 @@ class DupeCheckRequest(BaseModel):
 
 def _sync_fts(db: Session, entry: Entry) -> None:
     from app.search.bm25 import normalize_umlauts
+    tags_text = normalize_umlauts(" ".join(json.loads(entry.tags or "[]")))
     db.execute(text("DELETE FROM entries_fts WHERE rowid = :id"), {"id": entry.id})
     db.execute(
-        text("INSERT INTO entries_fts(rowid, title, question, answer, content) VALUES (:id,:t,:q,:a,:c)"),
+        text("INSERT INTO entries_fts(rowid, title, question, answer, content, tags) VALUES (:id,:t,:q,:a,:c,:tags)"),
         {
             "id": entry.id,
             "t": normalize_umlauts(entry.title or ""),
             "q": normalize_umlauts(entry.question or ""),
             "a": normalize_umlauts(entry.answer or ""),
             "c": normalize_umlauts(entry.content or ""),
+            "tags": tags_text,
         },
     )
 
@@ -60,15 +71,30 @@ def _get_setting(db: Session, key: str, default):
     return json.loads(row.value) if row else default
 
 
-def _create_qa_chunks(db: Session, entry_id: int, question: str, answer: str, chunk_size: int = 1500, chunk_overlap: int = 200) -> None:
+def _create_doc_chunks(db: Session, entry_id: int, content: str, chunk_size: int = 1500, chunk_overlap: int = 200) -> None:
+    from app.import_.chunker import chunk_text
+    chunks = chunk_text(content, max_chars=chunk_size, overlap_chars=chunk_overlap)
+    if not chunks:
+        chunks = [content] if content.strip() else []
+    for i, c in enumerate(chunks):
+        db.add(Chunk(entry_id=entry_id, chunk_index=i, chunk_type="content", content=c))
+
+
+def _create_qa_chunks(db: Session, entry_id: int, question: str, answer: str, title: str = "", chunk_size: int = 1500, chunk_overlap: int = 200) -> None:
     from app.import_.chunker import chunk_text
 
-    db.add(Chunk(entry_id=entry_id, chunk_index=0, chunk_type="question", content=question))
+    idx = 0
+    if title:
+        db.add(Chunk(entry_id=entry_id, chunk_index=idx, chunk_type="title", content=title))
+        idx += 1
+    db.add(Chunk(entry_id=entry_id, chunk_index=idx, chunk_type="question", content=question))
+    idx += 1
     answer_chunks = chunk_text(answer, max_chars=chunk_size, overlap_chars=chunk_overlap)
     if not answer_chunks:
         answer_chunks = [answer]
-    for i, ac in enumerate(answer_chunks):
-        db.add(Chunk(entry_id=entry_id, chunk_index=i + 1, chunk_type="answer", content=ac))
+    for ac in answer_chunks:
+        db.add(Chunk(entry_id=entry_id, chunk_index=idx, chunk_type="answer", content=ac))
+        idx += 1
 
 
 def _to_dict(entry: Entry, related: list | None = None) -> dict:
@@ -205,6 +231,7 @@ def get_entry(entry_id: int, db: Session = Depends(get_db)):
                             "id": e.id,
                             "entry_type": e.entry_type,
                             "title": e.title,
+                            "question": e.question,
                             "tags": json.loads(e.tags or "[]"),
                         }
                         for e in rel_entries
@@ -215,11 +242,37 @@ def get_entry(entry_id: int, db: Session = Depends(get_db)):
     return _to_dict(entry, related=related)
 
 
+@router.post("/document", status_code=201)
+def create_document(payload: DocCreate, db: Session = Depends(get_db)):
+    if not payload.content.strip():
+        raise HTTPException(400, "Inhalt darf nicht leer sein")
+    title_val = payload.title.strip()
+    entry = Entry(
+        entry_type="document",
+        title=title_val,
+        content=payload.content,
+        source_filename=None,
+        tags=json.dumps(payload.tags),
+    )
+    db.add(entry)
+    db.flush()
+    for tag in payload.tags:
+        db.add(EntryTag(entry_id=entry.id, tag=tag))
+    chunk_size = _get_setting(db, "chunk_size", 1500)
+    chunk_overlap = _get_setting(db, "chunk_overlap", 200)
+    _create_doc_chunks(db, entry.id, payload.content, chunk_size, chunk_overlap)
+    _sync_fts(db, entry)
+    db.commit()
+    enqueue_entry_chunks(entry.id)
+    return _to_dict(entry)
+
+
 @router.post("", status_code=201)
 def create_entry(payload: QACreate, db: Session = Depends(get_db)):
+    title_val = payload.title.strip()
     entry = Entry(
         entry_type="qa",
-        title=payload.question[:120],
+        title=title_val,
         question=payload.question,
         answer=payload.answer,
         tags=json.dumps(payload.tags),
@@ -230,7 +283,7 @@ def create_entry(payload: QACreate, db: Session = Depends(get_db)):
         db.add(EntryTag(entry_id=entry.id, tag=tag))
     chunk_size = _get_setting(db, "chunk_size", 1500)
     chunk_overlap = _get_setting(db, "chunk_overlap", 200)
-    _create_qa_chunks(db, entry.id, payload.question, payload.answer, chunk_size, chunk_overlap)
+    _create_qa_chunks(db, entry.id, payload.question, payload.answer, title_val, chunk_size, chunk_overlap)
     _sync_fts(db, entry)
     db.commit()
     enqueue_entry_chunks(entry.id)
@@ -242,11 +295,9 @@ def update_entry(entry_id: int, payload: QAUpdate, db: Session = Depends(get_db)
     entry = db.query(Entry).filter(Entry.id == entry_id).first()
     if not entry:
         raise HTTPException(404, "Entry not found")
-    if payload.question is not None:
-        entry.question = payload.question
-        entry.title = payload.question[:120]
-    if payload.answer is not None:
-        entry.answer = payload.answer
+
+    if payload.title is not None:
+        entry.title = payload.title.strip()
     if payload.tags is not None:
         entry.tags = json.dumps(payload.tags)
         db.query(EntryTag).filter(EntryTag.entry_id == entry_id).delete()
@@ -254,12 +305,21 @@ def update_entry(entry_id: int, payload: QAUpdate, db: Session = Depends(get_db)
             db.add(EntryTag(entry_id=entry_id, tag=tag))
     entry.updated_at = datetime.now(timezone.utc)
 
-    # Replace all chunks with fresh question + answer chunks
-    _delete_chunks_vec(db, entry_id)
-    db.query(Chunk).filter(Chunk.entry_id == entry_id).delete()
     chunk_size = _get_setting(db, "chunk_size", 1500)
     chunk_overlap = _get_setting(db, "chunk_overlap", 200)
-    _create_qa_chunks(db, entry_id, entry.question or "", entry.answer or "", chunk_size, chunk_overlap)
+    _delete_chunks_vec(db, entry_id)
+    db.query(Chunk).filter(Chunk.entry_id == entry_id).delete()
+
+    if entry.entry_type == "document":
+        if payload.content is not None:
+            entry.content = payload.content
+        _create_doc_chunks(db, entry_id, entry.content or "", chunk_size, chunk_overlap)
+    else:
+        if payload.question is not None:
+            entry.question = payload.question
+        if payload.answer is not None:
+            entry.answer = payload.answer
+        _create_qa_chunks(db, entry_id, entry.question or "", entry.answer or "", entry.title or "", chunk_size, chunk_overlap)
 
     _sync_fts(db, entry)
     db.commit()

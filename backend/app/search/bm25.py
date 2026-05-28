@@ -27,7 +27,7 @@ def fts_search(
 
     rows = db.execute(
         text("""
-            SELECT rowid, bm25(entries_fts) AS score
+            SELECT rowid, bm25(entries_fts, 1.3, 1.15, 1.0, 1.0, 1.2) AS score
             FROM entries_fts
             WHERE entries_fts MATCH :q
             ORDER BY score
@@ -72,10 +72,12 @@ def _apply_filters(
 
 def _escape_fts(query: str) -> str:
     import re
-    # Normalize umlauts so ae↔ä etc. match in both directions
-    # Split on non-alphanumeric chars so `-`, `.`, `+` etc. can't be misread as FTS5 operators
     normalized = normalize_umlauts(query)
     words = [w for w in re.split(r'\W+', normalized) if len(w) >= 3]
     if not words:
         return ""
+    # For long queries keep only the most distinctive (longest) words so AND-matching
+    # doesn't fail because common short function words are missing from documents.
+    if len(words) > 5:
+        words = sorted(set(words), key=len, reverse=True)[:5]
     return " ".join(words)

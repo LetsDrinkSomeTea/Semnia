@@ -8,10 +8,10 @@ services:
       - ./backend/app:/backend/app   # hot reload: mounts source over baked image
       - data-dev:/data
       - semnia-model-cache:/model-cache
-    environment:
-      - EMBEDDING_MODEL=intfloat/multilingual-e5-large
-      # - OLLAMA_URL=http://ollama:11434
-      # - OLLAMA_MODEL=llama3.2:1b
+#    environment:
+      # - EMBEDDING_MODEL=intfloat/multilingual-e5-large
+      # - LLM_URL=http://ollama:11434
+      # - LLM_MODEL=llama3.2:1b
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]

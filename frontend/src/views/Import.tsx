@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import {
-  uploadFile, getImportStatus,
+  uploadFile, getImportStatus, updateImportTags, listTags,
   parseQACsvStream, confirmQAImport,
 } from '../api/client'
 import type { QABulkRow, QABulkRowEvent, QABulkAction } from '../api/client'
@@ -17,12 +17,14 @@ interface UploadState {
   embedded_count: number
   done: boolean
   error: string | null
+  tags: string[]
 }
 
 interface ReviewRow extends QABulkRow {
   action: 'import' | 'skip' | 'replace'
   replace_id?: number
   expanded: boolean
+  title: string
 }
 
 // ── Document import tab ────────────────────────────────────────────────────────
@@ -30,8 +32,13 @@ interface ReviewRow extends QABulkRow {
 function DocImport({ toast }: Props) {
   const [over, setOver] = useState(false)
   const [uploads, setUploads] = useState<UploadState[]>([])
+  const [allTags, setAllTags] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    listTags().then(({ tags }) => setAllTags(tags.map((t) => t.name))).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const pending = uploads.filter((u) => !u.done && u.entry_id)
@@ -63,7 +70,7 @@ function DocImport({ toast }: Props) {
         toast(`Format nicht unterstützt: .${ext}`, 'error')
         continue
       }
-      const state: UploadState = { file: file.name, entry_id: null, chunk_count: 0, embedded_count: 0, done: false, error: null }
+      const state: UploadState = { file: file.name, entry_id: null, chunk_count: 0, embedded_count: 0, done: false, error: null, tags: [] }
       setUploads((prev) => [...prev, state])
       try {
         const result = await uploadFile(file)
@@ -91,6 +98,11 @@ function DocImport({ toast }: Props) {
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault(); setOver(false)
     if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files)
+  }
+
+  const handleTagChange = async (entry_id: number, tags: string[]) => {
+    setUploads((prev) => prev.map((u) => u.entry_id === entry_id ? { ...u, tags } : u))
+    await updateImportTags(entry_id, tags).catch(() => {})
   }
 
   const ext = (filename: string) => filename.split('.').pop()?.toUpperCase() ?? '?'
@@ -133,6 +145,15 @@ function DocImport({ toast }: Props) {
                   <span className={`stat ${u.done && !u.error ? 'done' : ''}`}>
                     {u.error ? 'Fehler' : u.done ? 'Fertig' : u.chunk_count === 0 ? 'Lädt…' : `${u.embedded_count}/${u.chunk_count}`}
                   </span>
+                  {u.entry_id && !u.error && (
+                    <div style={{ gridColumn: '1 / -1', paddingTop: 4 }}>
+                      <TagInput
+                        tags={u.tags}
+                        onChange={(tags) => handleTagChange(u.entry_id!, tags)}
+                        suggestions={allTags}
+                      />
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -142,7 +163,7 @@ function DocImport({ toast }: Props) {
 
       {uploads.every((u) => u.done) && uploads.length > 0 && (
         <p className="upload-done-hint">
-          Importierte Dokumente sind in der <a href="/browse">Übersicht</a> zu finden.
+          Importierte Dokumente sind in der <a href="/search">Übersicht</a> zu finden.
         </p>
       )}
     </>
@@ -156,6 +177,7 @@ function QABulkImport({ toast }: Props) {
   const [parseComplete, setParseComplete] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [rows, setRows] = useState<ReviewRow[]>([])
+  const [over, setOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -220,6 +242,10 @@ function QABulkImport({ toast }: Props) {
     setRows((prev) => prev!.map((r, idx) => idx === i ? { ...r, tags } : r))
   }
 
+  const setRowTitle = (i: number, t: string) => {
+    setRows((prev) => prev!.map((r, idx) => idx === i ? { ...r, title: t } : r))
+  }
+
   const setExpanded = (i: number, expanded: boolean) => {
     setRows((prev) => prev!.map((r, idx) => idx === i ? { ...r, expanded } : r))
   }
@@ -236,6 +262,7 @@ function QABulkImport({ toast }: Props) {
     if (!parseComplete || rows.length === 0) return
     setConfirming(true)
     const items: QABulkAction[] = rows.map((r) => ({
+      title: r.title,
       question: r.question,
       answer: r.answer,
       tags: r.tags,
@@ -253,18 +280,30 @@ function QABulkImport({ toast }: Props) {
     }
   }
 
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault(); setOver(false)
+    const file = e.dataTransfer.files[0]
+    if (file) handleFile(file)
+  }
+
   if (!parseProgress) {
     return (
       <div className="qa-bulk-upload">
-        <div className="import-drop" onClick={() => fileInputRef.current?.click()} style={{ cursor: 'pointer' }}>
+        <div
+          className={`import-drop ${over ? 'over' : ''}`}
+          onDragOver={(e) => { e.preventDefault(); setOver(true) }}
+          onDragLeave={() => setOver(false)}
+          onDrop={onDrop}
+          onClick={() => fileInputRef.current?.click()}
+        >
           <div className="big-ic">↑</div>
-          <h3>CSV-Datei auswählen</h3>
-          <p>Format: <code>question, answer, tags</code> — Tags kommasepariert in einer Zelle</p>
+          <h3>CSV-Datei hierher ziehen</h3>
+          <p>Format: <code>title, question, answer, tags</code> — Titel optional, Tags kommasepariert</p>
           <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={onFileChange} />
         </div>
         <div className="qa-bulk-hint">
           <p className="section-h">CSV-Format</p>
-          <pre className="code-block">{`question,answer,tags\n"Was ist XY?","XY ist ein System das...","tag1,tag2"\n"Wie funktioniert Z?","Z funktioniert durch...","tag3"`}</pre>
+          <pre className="code-block">{`title,question,answer,tags\n"XY einrichten","Wie richte ich XY ein?","XY einrichten: Schritt 1...","tag1,tag2"\n"","Wie funktioniert Z?","Z funktioniert durch...","tag3"`}</pre>
         </div>
       </div>
     )
@@ -320,7 +359,16 @@ function QABulkImport({ toast }: Props) {
         {rows.map((row, i) => (
           <div key={i} className={`qa-review-row ${row.duplicates.length > 0 ? 'has-dupe' : ''} ${row.action === 'skip' ? 'is-skip' : ''}`}>
             <div className="qa-review-main">
-              <div className="qa-review-q">{row.question}</div>
+              <div className="qa-review-q">
+                <input
+                  className="qa-review-title-input"
+                  placeholder="Titel (leer = Frage als Fallback)"
+                  value={row.title}
+                  onChange={(e) => setRowTitle(i, e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div className="qa-review-q-text">{row.question}</div>
+              </div>
               <div className="qa-review-a">{row.answer.length > 200 ? row.answer.slice(0, 200) + '…' : row.answer}</div>
               <div className="qa-review-tags">
                 <TagInput

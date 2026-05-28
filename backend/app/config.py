@@ -15,15 +15,16 @@ DEFAULT_SETTINGS: dict = {
     "dupe_threshold": 0.9,
     "top_k": 15,
     "hybrid_alpha": 0.7,
-    "chunk_size": 800,
-    "chunk_overlap": 150,
+    "chunk_size": 200,
+    "chunk_overlap": 40,
     "branding_name": "Semnia",
     "branding_accent": "#9933ee",
     "branding_font": "Inter, system-ui, sans-serif",
     "branding_logo_b64": "",
     "branding_custom_css": "",
-    "ollama_url": "http://ollama:11434" if os.getenv("DEMO", "").lower() in ("1", "true", "yes") else "",
-    "ollama_model": "llama3.2:3b",
+    "llm_url": "http://ollama:11434/v1",
+    "llm_model": "llama3.2:1b",
+    "llm_api_key": "",
 }
 
 
@@ -44,8 +45,9 @@ def _build_settings_overrides() -> dict:
     _str  ("APP_NAME",         "branding_name")
     _str  ("ACCENT_COLOR",     "branding_accent")
     _str  ("FONT_STACK",       "branding_font")
-    _str  ("OLLAMA_URL",       "ollama_url")
-    _str  ("OLLAMA_MODEL",     "ollama_model")
+    _str  ("LLM_URL",           "llm_url")
+    _str  ("LLM_MODEL",        "llm_model")
+    _str  ("LLM_API_KEY",      "llm_api_key")
 
     # Custom CSS — inline string or file path
     if css := os.getenv("CUSTOM_CSS"):

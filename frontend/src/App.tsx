@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom'
 import { useSettings } from './hooks/useSettings'
 import { getStatus } from './api/client'
 import type { ApiStatus } from './types'
 import Search from './views/Search'
-import Browse from './views/Browse'
 import Detail from './views/Detail'
 import QAEditor from './views/QAEditor'
-import Import from './views/Import'
+import Create from './views/Create'
 import Settings from './views/Settings'
 
 interface Toast {
@@ -20,9 +19,7 @@ let toastId = 0
 
 const navItems = [
   { to: '/search', label: 'Suche' },
-  { to: '/browse', label: 'Übersicht' },
-  { to: '/editor/new', label: 'Neu' },
-  { to: '/import', label: 'Import' },
+  { to: '/create', label: 'Erstellen' },
   { to: '/systeminfo', label: 'Systeminfo' },
 ]
 
@@ -51,7 +48,7 @@ function AppShell() {
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 4000)
   }, [])
 
-  const ollamaReady = status?.ollama_ready ?? false
+  const ollamaReady = status?.llm_status === 'ready'
 
   if (loading) return null
 
@@ -99,11 +96,12 @@ function AppShell() {
 
       <Routes>
         <Route path="/search" element={<Search toast={toast} settings={settings} ollamaReady={ollamaReady} />} />
-        <Route path="/browse" element={<Browse toast={toast} />} />
+        <Route path="/browse" element={<Navigate to="/search" replace />} />
         <Route path="/entries/:id" element={<Detail toast={toast} />} />
-        <Route path="/editor/new" element={<QAEditor toast={toast} settings={settings} />} />
+        <Route path="/editor/new" element={<Navigate to="/create" replace />} />
         <Route path="/editor/:id" element={<QAEditor toast={toast} settings={settings} />} />
-        <Route path="/import" element={<Import toast={toast} />} />
+        <Route path="/import" element={<Navigate to="/create" replace />} />
+        <Route path="/create" element={<Create toast={toast} settings={settings} />} />
         <Route path="/systeminfo" element={<Settings toast={toast} />} />
         <Route path="*" element={<Search toast={toast} settings={settings} ollamaReady={ollamaReady} />} />
       </Routes>

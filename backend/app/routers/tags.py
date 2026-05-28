@@ -20,7 +20,11 @@ def list_tags(db: Session = Depends(get_db)):
         .order_by(func.count(EntryTag.entry_id).desc())
         .all()
     )
-    return [{"name": row.tag, "count": row.count} for row in rows]
+    total = db.query(Entry).count()
+    return {
+        "total": total,
+        "tags": [{"name": row.tag, "count": row.count} for row in rows],
+    }
 
 
 class SuggestTagsRequest(BaseModel):

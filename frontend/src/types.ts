@@ -17,6 +17,7 @@ export interface RelatedEntry {
   id: number
   entry_type: 'qa' | 'document'
   title: string
+  question?: string | null
   tags: string[]
 }
 
@@ -24,13 +25,15 @@ export interface SearchResult {
   id: number
   entry_type: 'qa' | 'document'
   title: string
+  question?: string | null
   snippet: string
   highlight_spans: number[][]
   score: number
   tags: string[]
   call_count: number
-  matched_by?: 'semantic' | 'bm25' | 'both' | 'fuzzy'
-  matched_chunk_type?: 'question' | 'answer' | 'content'
+  matched_by?: 'semantic' | 'bm25' | 'fuzzy'
+  matched_chunk_type?: 'question' | 'answer' | 'content' | 'title' | 'tag'
+  matched_chunk_id?: number | null
 }
 
 export interface Tag {
@@ -50,8 +53,9 @@ export interface AppSettings {
   branding_font: string
   branding_logo_b64: string
   branding_custom_css: string
-  ollama_url: string
-  ollama_model: string
+  llm_url: string
+  llm_model: string
+  llm_api_key: string
 }
 
 export interface ApiStatus {
@@ -62,9 +66,8 @@ export interface ApiStatus {
   db_size_bytes: number
   model: string
   model_ready: boolean
-  ollama_configured: boolean
-  ollama_ready: boolean
-  ollama_model: string
+  llm_status: 'inactive' | 'error' | 'ready'
+  llm_model: string
 }
 
 export interface ImportItem {
