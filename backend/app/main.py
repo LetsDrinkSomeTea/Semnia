@@ -75,10 +75,6 @@ def _migrate_qa_chunks() -> None:
                 continue
             old = db.query(Chunk).filter(Chunk.entry_id == entry_id).all()
             for c in old:
-                try:
-                    db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": c.id})
-                except Exception:
-                    pass
                 db.delete(c)
             db.flush()
 
@@ -107,11 +103,14 @@ def _enqueue_missing_embeddings() -> None:
         all_ids = [row[0] for row in db.query(Chunk.id).all()]
         if not all_ids:
             return
-        already = {
-            row[0]
-            for row in db.execute(text("SELECT rowid FROM chunks_vec")).fetchall()
-        }
-        missing = [i for i in all_ids if i not in already]
+        from app.search.meilisearch_client import client, INDEX_NAME
+        try:
+            stats = client.index(INDEX_NAME).get_stats()
+            if stats.number_of_documents >= len(all_ids):
+                return
+        except Exception:
+            pass
+        missing = all_ids
         for cid in missing:
             enqueue_chunk(cid)
         if missing:
@@ -140,6 +139,8 @@ def _resolve_embedding_dim() -> int:
 async def lifespan(app: FastAPI):
     load_model()
     dim = _resolve_embedding_dim()
+    from app.search.meilisearch_client import init_meilisearch
+    init_meilisearch(dim)
     init_db(embedding_dim=dim)
     insert_seed_data()
     _migrate_qa_chunks()
@@ -184,20 +185,19 @@ async def api_status(db: Session = Depends(get_db)):
     entry_count = db.query(Entry).count()
     chunk_count = db.query(Chunk).count()
 
-    # Unembedded chunks
+    # Meilisearch stats
+    meilisearch_stats = None
     unembedded = 0
-    if chunk_count:
-        try:
-            all_ids = [r[0] for r in db.query(Chunk.id).all()]
-            embedded = db.execute(
-                text("SELECT COUNT(*) FROM chunks_vec WHERE rowid IN (:ids)").bindparams(
-                    sqlalchemy.bindparam("ids", expanding=True)
-                ),
-                {"ids": all_ids},
-            ).scalar() or 0
-            unembedded = chunk_count - embedded
-        except Exception:
-            unembedded = 0
+    try:
+        from app.search.meilisearch_client import client, INDEX_NAME
+        stats = client.index(INDEX_NAME).get_stats()
+        meilisearch_stats = {
+            "number_of_documents": stats.number_of_documents,
+            "is_indexing": stats.is_indexing
+        }
+        unembedded = max(0, chunk_count - stats.number_of_documents)
+    except Exception:
+        unembedded = chunk_count
 
     # DB file size
     db_size_bytes = 0
@@ -236,6 +236,7 @@ async def api_status(db: Session = Depends(get_db)):
         "model_ready": get_model() is not None,
         "llm_status": llm_status,
         "llm_model": llm_model,
+        "meilisearch_stats": meilisearch_stats,
     }
 
 

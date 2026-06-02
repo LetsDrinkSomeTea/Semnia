@@ -59,6 +59,12 @@ export default function System(_props: Props) {
       value: !status ? '—' : status.unembedded_chunks === 0 ? 'Alles eingebettet' : `${status.unembedded_chunks} ausstehend`,
       sub: status && status.unembedded_chunks > 0 ? `von ${status.chunk_count} Chunks` : undefined,
     },
+    {
+      label: 'Meilisearch',
+      state: !status ? 'warn' : status.meilisearch_stats ? (status.meilisearch_stats.is_indexing ? 'warn' : 'ok') : 'err',
+      value: !status ? '—' : status.meilisearch_stats ? `${status.meilisearch_stats.number_of_documents} indiziert${status.meilisearch_stats.is_indexing ? ' (arbeitet…)' : ''}` : 'Nicht erreichbar',
+      sub: status?.meilisearch_stats ? 'Suchindex' : undefined,
+    },
   ]
 
   const configGroups = [

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.config import DEFAULT_SETTINGS
 from app.db.session import get_db
 from app.db.models import Setting, Entry, Chunk
-from app.search.hybrid import search as do_search, _snippet
+
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -20,6 +20,7 @@ class SearchRequest(BaseModel):
     query: str
     threshold: float | None = None
     top_k: int | None = None
+    page: int = 1
     tags: list[str] = []
     entry_type: str | None = None
 
@@ -69,86 +70,38 @@ def search(req: SearchRequest, db: Session = Depends(get_db)):
     req.validate_entry_type()
     threshold = req.threshold if req.threshold is not None else _setting(db, "search_threshold", DEFAULT_SETTINGS["search_threshold"])
     top_k = req.top_k if req.top_k is not None else _setting(db, "top_k", 10)
-    alpha = _setting(db, "hybrid_alpha", 0.7)
 
-    return do_search(
-        db=db,
+    from app.search.meilisearch_client import search as ms_search
+    results = ms_search(
         query=req.query,
         threshold=threshold,
         top_k=top_k,
-        alpha=alpha,
+        page=req.page,
         entry_type=req.entry_type or None,
         tag_filter=req.tags or None,
+        hybrid=True
     )
+    return {"items": results, "has_more": len(results) >= top_k}
 
 
 @router.post("/fuzzy")
 def fuzzy_search(req: SearchRequest, db: Session = Depends(get_db)):
-    """Typo-tolerant search. Returns {results, suggestion} where suggestion is the corrected query."""
+    """Typo-tolerant search now powered by Meilisearch."""
     req.validate_entry_type()
-    from collections import Counter
     top_k = req.top_k if req.top_k is not None else _setting(db, "top_k", 10)
-    query_words = [w.lower() for w in req.query.split() if len(w) >= 3]
-    if not query_words:
-        return {"results": [], "suggestion": None}
-
-    q = db.query(Entry)
-    if req.entry_type:
-        q = q.filter(Entry.entry_type == req.entry_type)
-    entries = q.all()
-
-    scored: list[tuple[Entry, float]] = []
-    for entry in entries:
-        raw = " ".join(filter(None, [entry.title, entry.question, entry.answer, entry.content]))
-        text_words = list({w for w in re.split(r"\W+", raw.lower()) if len(w) >= 3})
-        hits = sum(1 for qw in query_words if get_close_matches(qw, text_words, n=1, cutoff=0.75))
-        if hits:
-            scored.append((entry, hits / len(query_words)))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-
-    # Build suggestion: for each query word, find the most common close match in top results
-    suggestions: dict[str, str] = {}
-    for qw in query_words:
-        candidates: list[str] = []
-        for entry, _ in scored[:5]:
-            raw = " ".join(filter(None, [entry.title, entry.question, entry.answer, entry.content]))
-            text_words = list({w for w in re.split(r"\W+", raw.lower()) if len(w) >= 3})
-            matches = get_close_matches(qw, text_words, n=1, cutoff=0.75)
-            if matches and matches[0] != qw:
-                candidates.append(matches[0])
-        if candidates:
-            suggestions[qw] = Counter(candidates).most_common(1)[0][0]
-
-    suggestion_parts = []
-    for w in req.query.split():
-        lw = w.lower()
-        suggestion_parts.append(suggestions.get(lw, w))
-    suggestion = " ".join(suggestion_parts)
-    if suggestion.lower() == req.query.lower():
-        suggestion = None
-
-    results = []
-    for entry, score in scored[:top_k]:
-        # Determine which chunk type matched for highlight routing
-        from app.search.hybrid import _detect_bm25_chunk_type, _snippet as hybrid_snippet
-        mct = _detect_bm25_chunk_type(entry, req.query)
-        snippet, spans = hybrid_snippet(entry, req.query, mct)
-        effective_title = entry.title or (entry.question or "")[:120] or (entry.content or "")[:120]
-        results.append({
-            "id": entry.id,
-            "entry_type": entry.entry_type,
-            "title": effective_title,
-            "snippet": snippet,
-            "highlight_spans": spans,
-            "score": round(score, 4),
-            "tags": json.loads(entry.tags or "[]"),
-            "call_count": entry.call_count,
-            "matched_by": "fuzzy",
-            "matched_chunk_type": mct,
-        })
-
-    return {"results": results, "suggestion": suggestion}
+    
+    from app.search.meilisearch_client import search as ms_search
+    results = ms_search(
+        query=req.query,
+        threshold=0.0,
+        top_k=top_k,
+        page=req.page,
+        entry_type=req.entry_type or None,
+        tag_filter=req.tags or None,
+        hybrid=False
+    )
+    
+    return {"items": results, "has_more": len(results) >= top_k, "suggestion": None}
 
 
 @router.post("/summarize")

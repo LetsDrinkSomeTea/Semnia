@@ -33,17 +33,17 @@ class SuggestTagsRequest(BaseModel):
 
 @router.post("/suggest")
 def suggest_tags(req: SuggestTagsRequest, db: Session = Depends(get_db)):
-    from app.search.bm25 import fts_search
+    from app.search.meilisearch_client import search as ms_search
 
     text = (req.text or "").strip()
     if len(text) < 10:
         return []
 
-    hits = fts_search(db, text, top_k=15)
+    hits = ms_search(query=text, threshold=0.1, top_k=15, hybrid=False)
     if not hits:
         return []
 
-    entry_ids = [eid for eid, _ in hits]
+    entry_ids = [hit["id"] for hit in hits]
     entries = db.query(Entry).filter(Entry.id.in_(entry_ids)).all()
 
     counter: Counter = Counter()

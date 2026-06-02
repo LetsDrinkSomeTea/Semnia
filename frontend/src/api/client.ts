@@ -33,12 +33,13 @@ export interface SearchRequest {
   query: string
   threshold?: number
   top_k?: number
+  page?: number
   tags?: string[]
   entry_type?: string
 }
 
 export const search = (body: SearchRequest) =>
-  req<SearchResult[]>('/search', { method: 'POST', body: JSON.stringify(body) })
+  req<{ items: SearchResult[]; has_more: boolean }>('/search', { method: 'POST', body: JSON.stringify(body) })
 
 export function summarizeStream(
   sources: { entry_id: number; chunk_id?: number | null }[],

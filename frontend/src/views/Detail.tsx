@@ -120,7 +120,7 @@ export default function Detail({ toast }: Props) {
               {entry.call_count}× aufgerufen
             </span>
           </div>
-          <h1>{mct === 'title' ? hl(entry.title || entry.question) : (entry.title || entry.question)}</h1>
+          <h1>{mct === 'title' ? hl(entry.display_title || null) : entry.display_title}</h1>
         </div>
 
         {isQA ? (
@@ -168,7 +168,7 @@ export default function Detail({ toast }: Props) {
             {entry.related.map((r) => (
               <EntryRow
                 key={r.id}
-                title={r.title || r.question || ''}
+                title={r.display_title || ''}
                 entry_type={r.entry_type}
                 onClick={() => navigate(`/entries/${r.id}`)}
               />

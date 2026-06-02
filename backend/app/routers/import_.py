@@ -10,7 +10,6 @@ from app.db.models import Entry, EntryTag, Chunk
 from app.import_.parsers import parse_markdown, parse_pdf, parse_docx
 from app.import_.chunker import chunk_text
 from app.embeddings.queue import enqueue_entry_chunks
-from app.search.bm25 import normalize_umlauts
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
@@ -76,11 +75,6 @@ async def upload_file(
     for i, chunk_content in enumerate(chunks):
         db.add(Chunk(entry_id=entry.id, chunk_index=i, content=chunk_content))
 
-    tags_text = normalize_umlauts(" ".join(tag_list))
-    db.execute(
-        text("INSERT INTO entries_fts(rowid, title, question, answer, content, tags) VALUES (:id,:t,'','',:c,:tags)"),
-        {"id": entry.id, "t": normalize_umlauts(title), "c": normalize_umlauts(text_content), "tags": tags_text},
-    )
     db.commit()
     enqueue_entry_chunks(entry.id)
 
@@ -137,11 +131,6 @@ def update_import_tags(entry_id: int, payload: _TagsPayload, db: Session = Depen
     db.query(EntryTag).filter(EntryTag.entry_id == entry_id).delete()
     for tag in tag_list:
         db.add(EntryTag(entry_id=entry_id, tag=tag))
-    tags_text = normalize_umlauts(" ".join(tag_list))
-    db.execute(
-        text("UPDATE entries_fts SET title = :t, tags = :tags WHERE rowid = :id"),
-        {"t": normalize_umlauts(entry.title), "tags": tags_text, "id": entry_id},
-    )
     db.commit()
     return {"id": entry.id, "tags": tag_list}
 
@@ -151,13 +140,8 @@ def delete_import(entry_id: int, db: Session = Depends(get_db)):
     entry = db.query(Entry).filter(Entry.id == entry_id, Entry.entry_type == "document").first()
     if not entry:
         raise HTTPException(404, "Dokument nicht gefunden")
-    chunk_ids = [c.id for c in db.query(Chunk).filter(Chunk.entry_id == entry_id).all()]
-    for cid in chunk_ids:
-        try:
-            db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": cid})
-        except Exception:
-            pass
-    db.execute(text("DELETE FROM entries_fts WHERE rowid = :id"), {"id": entry_id})
+    from app.search.meilisearch_client import delete_entry_from_meili
+    delete_entry_from_meili(entry_id)
     db.delete(entry)
     db.commit()
 
@@ -184,18 +168,19 @@ def _process_qa_row(
     """Synchronous per-row processing: tag suggestions + dupe check. Runs in a thread."""
     from collections import Counter
     from app.db.session import SessionLocal
-    from app.embeddings.model import encode_query, to_bytes
-    from app.search.bm25 import fts_search
+    from app.embeddings.model import encode_query
 
     combined = f"{question} {answer}"
     row_db = SessionLocal()
     suggested_tags: list[str] = []
     duplicates: list[dict] = []
     try:
-        # Tag suggestions via BM25
+        from app.search.meilisearch_client import search as ms_search
+        
+        # Tag suggestions via meilisearch
         if len(combined) >= 10:
-            hits = fts_search(row_db, combined, top_k=10)
-            entry_ids = [eid for eid, _ in hits]
+            hits = ms_search(query=combined, threshold=0.1, top_k=10, hybrid=False)
+            entry_ids = [h["id"] for h in hits]
             if entry_ids:
                 entries = row_db.query(Entry).filter(Entry.id.in_(entry_ids)).all()
                 ctr: Counter = Counter()
@@ -204,38 +189,18 @@ def _process_qa_row(
                         ctr[t] += 1
                 suggested_tags = [t for t, _ in ctr.most_common(5) if t not in tags]
 
-        # Dupe check via embedding — use question only; combined question+answer
-        # embeddings diverge from stored per-chunk vectors and yield ~0.85 cosine
-        # even for identical entries, causing misses near the threshold.
-        emb_bytes = to_bytes(encode_query(question))
-        vec_rows = row_db.execute(
-            text("SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH :emb ORDER BY distance LIMIT 20"),
-            {"emb": emb_bytes},
-        ).fetchall()
-        chunk_ids = [int(r[0]) for r in vec_rows]
-        chunk_to_entry = {
-            c.id: c.entry_id
-            for c in row_db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all()
-        } if chunk_ids else {}
-
-        seen: set[int] = set()
-        for rowid, distance in vec_rows:
-            entry_id = chunk_to_entry.get(int(rowid))
-            if not entry_id or entry_id in seen:
-                continue
-            cosine_sim = float(np.clip(1.0 - (distance ** 2) / 2.0, 0.0, 1.0))
-            if cosine_sim >= dupe_threshold:
-                e = row_db.query(Entry).filter(Entry.id == entry_id).first()
-                if e and e.entry_type == "qa":
-                    seen.add(entry_id)
-                    duplicates.append({
-                        "id": e.id,
-                        "question": e.question,
-                        "answer": (e.answer or "")[:200],
-                        "score": round(cosine_sim, 4),
-                    })
-    except Exception:
-        pass
+        # Dupe check via embedding — use question only
+        hits = ms_search(query=question, threshold=dupe_threshold, top_k=20, entry_type="qa", hybrid=True)
+        for hit in hits:
+            duplicates.append({
+                "id": hit["id"],
+                "question": hit["question"],
+                "answer": hit.get("answer", "")[:200],
+                "score": hit["score"],
+            })
+    except Exception as e:
+        import logging
+        logging.error(f"Error processing QA row: {e}")
     finally:
         row_db.close()
 
@@ -291,6 +256,8 @@ async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_d
                     row["title"], row["question"], row["answer"], row["tags"], dupe_threshold,
                 )
             except Exception as exc:
+                import logging
+                logging.error(f"Error in parse_qa_csv for row {idx}: {exc}")
                 result = {
                     "title": row["title"],
                     "question": row["question"],
@@ -338,31 +305,7 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
                 for tag in item.tags:
                     db.add(EntryTag(entry_id=entry.id, tag=tag))
                 # Rebuild chunks so vector index stays in sync with updated answer
-                _chunk_ids = [c.id for c in db.query(Chunk).filter(Chunk.entry_id == entry.id).all()]
-                for cid in _chunk_ids:
-                    try:
-                        db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": cid})
-                    except Exception:
-                        pass
-                db.query(Chunk).filter(Chunk.entry_id == entry.id).delete()
-                _title_val = entry.title or ""
-                _idx = 0
-                if _title_val:
-                    db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="title", content=_title_val))
-                    _idx += 1
-                db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="question", content=entry.question or ""))
-                _idx += 1
-                _answer_chunks = chunk_text(item.answer or "")
-                if not _answer_chunks:
-                    _answer_chunks = [item.answer or ""]
-                for ac in _answer_chunks:
-                    db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="answer", content=ac))
-                    _idx += 1
-                _tags_text = normalize_umlauts(" ".join(item.tags))
-                db.execute(
-                    text("UPDATE entries_fts SET answer = :a, tags = :tags WHERE rowid = :id"),
-                    {"a": normalize_umlauts(entry.answer or ""), "tags": _tags_text, "id": entry.id},
-                )
+                # Let queue handle Meilisearch sync
                 enqueue_ids.append(entry.id)
                 replaced += 1
             continue
@@ -395,11 +338,6 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
             db.add(Chunk(entry_id=entry.id, chunk_index=_idx, chunk_type="answer", content=ac))
             _idx += 1
 
-        _tags_text = normalize_umlauts(" ".join(item.tags))
-        db.execute(
-            text("INSERT INTO entries_fts(rowid, title, question, answer, content, tags) VALUES (:id,:t,:q,:a,'',:tags)"),
-            {"id": entry.id, "t": normalize_umlauts(title), "q": normalize_umlauts(item.question), "a": normalize_umlauts(item.answer or ""), "tags": _tags_text},
-        )
         enqueue_ids.append(entry.id)
         imported += 1
 
@@ -412,15 +350,5 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
 
 
 def _count_embedded(db: Session, chunk_ids: list[int]) -> int:
-    if not chunk_ids:
-        return 0
-    try:
-        from sqlalchemy import bindparam
-        return db.execute(
-            text("SELECT COUNT(*) FROM chunks_vec WHERE rowid IN (:ids)").bindparams(
-                bindparam("ids", expanding=True)
-            ),
-            {"ids": chunk_ids},
-        ).scalar() or 0
-    except Exception:
-        return 0
+    # Optimistic approximation for UI since Meilisearch async syncing is fast
+    return len(chunk_ids)

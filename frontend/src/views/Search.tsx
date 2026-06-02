@@ -4,6 +4,7 @@ import { search, listTags, summarizeStream, listEntries } from '../api/client'
 import type { SearchResult, Tag, AppSettings, Entry } from '../types'
 import ScoreBar from '../components/ScoreBar'
 import EntryTypeBadge from '../components/EntryTypeBadge'
+import InfiniteScrollObserver from '../components/InfiniteScrollObserver'
 
 interface Props {
   toast: (msg: string, kind?: 'success' | 'error' | 'info') => void
@@ -41,7 +42,7 @@ function renderWithCitations(
         {nums.map((n) => {
           const src = sources[n - 1]
           return (
-            <button key={n} className="llm-citation" title={src?.title} onClick={() => src && onCite(src.id)}>
+            <button key={n} className="llm-citation" title={src?.display_title} onClick={() => src && onCite(src.id)}>
               {n}
             </button>
           )
@@ -114,9 +115,15 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
   const [sort, setSort] = useState<SortMode>('updated')
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
+  const [page, setPage] = useState(1)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [tookMs, setTookMs] = useState(0)
   const [browseEntries, setBrowseEntries] = useState<Entry[]>([])
   const [browseLoading, setBrowseLoading] = useState(false)
+  const [browsePage, setBrowsePage] = useState(1)
+  const [browseHasMore, setBrowseHasMore] = useState(false)
+  const [browseLoadingMore, setBrowseLoadingMore] = useState(false)
   const [tags, setTags] = useState<Tag[]>([])
   const [totalEntries, setTotalEntries] = useState(0)
   const [llmAnswer, setLlmAnswer] = useState<string | null>(null)
@@ -131,42 +138,69 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
   useEffect(() => { inputRef.current?.focus() }, [])
 
   const runSearch = useCallback(
-    async (q: string) => {
+    async (q: string, p = 1) => {
       sessionStorage.setItem('wdb-q', q)
       if (!q.trim()) { setResults([]); setLlmAnswer(null); return }
       abortRef.current?.abort()
       abortRef.current = new AbortController()
-      setLoading(true)
+      if (p === 1) setLoading(true)
+      else setLoadingMore(true)
       const t0 = performance.now()
       try {
         const r = await search({
           query: q,
           threshold,
           top_k: settings.top_k,
+          page: p,
           tags: tagFilter ? [tagFilter] : undefined,
           entry_type: typeFilter || undefined,
         })
-        setResults(r)
-        setTookMs(performance.now() - t0)
+        setResults((prev) => (p === 1 ? r.items : [...prev, ...r.items]))
+        setHasMore(r.has_more)
+        if (p === 1) setTookMs(performance.now() - t0)
+        setPage(p)
       } catch (e) {
         if ((e as Error).name !== 'AbortError') toast('Suchfehler', 'error')
       } finally {
         setLoading(false)
+        setLoadingMore(false)
       }
     },
     [threshold, tagFilter, typeFilter, settings.top_k, toast],
   )
 
-  useEffect(() => { runSearch(query) }, [query, runSearch])
+  useEffect(() => { runSearch(query, 1) }, [query, runSearch])
+
+  const runBrowse = useCallback(
+    async (p = 1) => {
+      if (p === 1) setBrowseLoading(true)
+      else setBrowseLoadingMore(true)
+      try {
+        const r = await listEntries({
+          page: p,
+          per_page: 40,
+          tag: tagFilter ?? undefined,
+          entry_type: typeFilter || undefined,
+          sort,
+        })
+        setBrowseEntries((prev) => (p === 1 ? r.items : [...prev, ...r.items]))
+        setBrowseHasMore(r.items.length >= 40)
+        setBrowsePage(p)
+      } catch {
+        toast('Fehler beim Laden', 'error')
+      } finally {
+        setBrowseLoading(false)
+        setBrowseLoadingMore(false)
+      }
+    },
+    [tagFilter, typeFilter, sort, toast]
+  )
 
   useEffect(() => {
-    if (query.trim()) return
-    setBrowseLoading(true)
-    listEntries({ per_page: 40, tag: tagFilter ?? undefined, entry_type: typeFilter || undefined, sort })
-      .then((r) => setBrowseEntries(r.items))
-      .catch(() => toast('Fehler beim Laden', 'error'))
-      .finally(() => setBrowseLoading(false))
-  }, [query, tagFilter, typeFilter, sort])
+    if (!query.trim()) {
+      runBrowse(1)
+    }
+  }, [query, runBrowse])
 
   const onSubmit = (e: React.FormEvent) => { e.preventDefault(); runSearch(query) }
   const llmAbortRef = useRef<AbortController | null>(null)
@@ -359,7 +393,7 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
                   {usedSources.map(({ s, n }) => (
                     <button key={s.id} className="llm-source-item" onClick={() => navigate(`/entries/${s.id}`)}>
                       <span className="llm-source-n">{n}</span>
-                      <span className="llm-source-title">{s.title}</span>
+                      <span className="llm-source-title">{s.display_title}</span>
                     </button>
                   ))}
                 </div>
@@ -381,7 +415,7 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
               {browseEntries.map((e) => (
                 <article key={e.id} className="result result--browse" onClick={() => navigate(`/entries/${e.id}`)} role="button">
                   <div>
-                    <h3 className="q">{e.title || e.question || e.content || ''}</h3>
+                    <h3 className="q">{e.display_title}</h3>
                     <div className="meta-row">
                       <div className="meta-system">
                         <EntryTypeBadge type={e.entry_type} />
@@ -401,6 +435,11 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
                   <div className="right-side"><span>{formatMeta(e)}</span></div>
                 </article>
               ))}
+              <InfiniteScrollObserver
+                hasMore={browseHasMore}
+                loading={browseLoadingMore}
+                onIntersect={() => runBrowse(browsePage + 1)}
+              />
             </div>
           )
         ) : (
@@ -426,8 +465,8 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
                   <article key={r.id} className="result" onClick={() => handleResultClick(r)} role="button">
                     <ScoreBar score={r.score} />
                     <div>
-                      <h3 className="q">{r.title}</h3>
-                      {showContext && (
+                    <h3 className="q">{r.display_title}</h3>
+                    {showContext && (
                         <p className="result-context">
                           {(r.question!.length > 100 ? r.question!.slice(0, 100) + '…' : r.question)}
                         </p>
@@ -462,6 +501,11 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
                   </article>
                 )
               })}
+              <InfiniteScrollObserver
+                hasMore={hasMore}
+                loading={loadingMore}
+                onIntersect={() => runSearch(query, page + 1)}
+              />
             </div>
           ) : null
         )}

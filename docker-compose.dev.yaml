@@ -8,7 +8,9 @@ services:
       - ./backend/app:/backend/app   # hot reload: mounts source over baked image
       - data-dev:/data
       - semnia-model-cache:/model-cache
-#    environment:
+    environment:
+      - MEILISEARCH_URL=http://meilisearch:7700
+      - MEILISEARCH_KEY=semnia_local_dev_key
       # - EMBEDDING_MODEL=intfloat/multilingual-e5-large
       # - LLM_URL=http://ollama:11434
       # - LLM_MODEL=llama3.2:1b
@@ -44,8 +46,20 @@ services:
     profiles:
       - llm
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.10
+    restart: unless-stopped
+    environment:
+      - MEILI_NO_ANALYTICS=true
+      - MEILI_MASTER_KEY=semnia_local_dev_key
+    ports:
+      - "7700:7700"  # Expose in dev for easy debugging
+    volumes:
+      - meili_dev_data:/meili_data
+
 volumes:
   data-dev:
   semnia-model-cache:
   frontend_nm:
   ollama-dev:
+  meili_dev_data:

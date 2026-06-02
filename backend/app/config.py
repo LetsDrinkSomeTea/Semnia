@@ -10,6 +10,9 @@ DEMO: bool = os.getenv("DEMO", "").lower() in ("1", "true", "yes")
 # Explicit override only — normally left unset and auto-detected from the loaded model at startup.
 EMBEDDING_DIM_OVERRIDE: int | None = int(os.getenv("EMBEDDING_DIM")) if os.getenv("EMBEDDING_DIM") else None
 
+MEILISEARCH_URL = os.getenv("MEILISEARCH_URL", "http://localhost:7700")
+MEILISEARCH_KEY = os.getenv("MEILISEARCH_KEY", "")
+
 DEFAULT_SETTINGS: dict = {
     "search_threshold": 0.3,
     "dupe_threshold": 0.9,

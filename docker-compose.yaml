@@ -16,6 +16,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    environment:
+      - MEILISEARCH_URL=http://meilisearch:7700
+      - MEILISEARCH_KEY=semnia_local_dev_key
 
   ollama:
     image: ollama/ollama
@@ -26,7 +29,19 @@ services:
     profiles:
       - llm
 
+  meilisearch:
+    image: getmeili/meilisearch:v1.10
+    container_name: semnia-meilisearch
+    restart: unless-stopped
+    environment:
+      - MEILI_NO_ANALYTICS=true
+      - MEILI_MASTER_KEY=semnia_local_dev_key
+    volumes:
+      - meili_data:/meili_data
+
+
 volumes:
   data:
   semnia-model-cache:
   ollama_data:
+  meili_data:

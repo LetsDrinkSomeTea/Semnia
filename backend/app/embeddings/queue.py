@@ -2,8 +2,8 @@ import asyncio
 import logging
 from sqlalchemy import text
 from app.db.session import SessionLocal
-from app.db.models import Chunk
-from app.embeddings.model import encode_passage, to_bytes
+from app.db.models import Chunk, Entry
+from app.embeddings.model import encode_passage
 
 logger = logging.getLogger(__name__)
 _queue: asyncio.Queue[int] = asyncio.Queue()
@@ -42,17 +42,16 @@ def _embed_chunk(chunk_id: int) -> None:
         chunk = db.query(Chunk).filter(Chunk.id == chunk_id).first()
         if not chunk or not chunk.content.strip():
             return
+            
+        entry = db.query(Entry).filter(Entry.id == chunk.entry_id).first()
+        if not entry:
+            return
+            
         emb = encode_passage(chunk.content)
-        # vec0 doesn't support INSERT OR REPLACE; delete first to be idempotent
-        try:
-            db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": chunk_id})
-        except Exception:
-            pass
-        db.execute(
-            text("INSERT INTO chunks_vec(rowid, embedding) VALUES (:id, :emb)"),
-            {"id": chunk_id, "emb": to_bytes(emb)},
-        )
-        db.commit()
-        logger.info(f"Embedded chunk {chunk_id} (entry {chunk.entry_id})")
+        
+        from app.search.meilisearch_client import upsert_chunk
+        upsert_chunk(entry, chunk, emb.tolist())
+        
+        logger.info(f"Embedded and synced chunk {chunk_id} to Meilisearch (entry {chunk.entry_id})")
     finally:
         db.close()

@@ -19,3 +19,6 @@ custom/
 .DS_Store
 *.env
 .env
+
+# Antigravity
+.antigravitycli/

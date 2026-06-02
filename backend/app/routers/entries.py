@@ -41,29 +41,13 @@ class DupeCheckRequest(BaseModel):
 
 
 def _sync_fts(db: Session, entry: Entry) -> None:
-    from app.search.bm25 import normalize_umlauts
-    tags_text = normalize_umlauts(" ".join(json.loads(entry.tags or "[]")))
-    db.execute(text("DELETE FROM entries_fts WHERE rowid = :id"), {"id": entry.id})
-    db.execute(
-        text("INSERT INTO entries_fts(rowid, title, question, answer, content, tags) VALUES (:id,:t,:q,:a,:c,:tags)"),
-        {
-            "id": entry.id,
-            "t": normalize_umlauts(entry.title or ""),
-            "q": normalize_umlauts(entry.question or ""),
-            "a": normalize_umlauts(entry.answer or ""),
-            "c": normalize_umlauts(entry.content or ""),
-            "tags": tags_text,
-        },
-    )
+    # Removed FTS5 sync. Data is synced to Meilisearch via chunk queue.
+    pass
 
 
 def _delete_chunks_vec(db: Session, entry_id: int) -> None:
-    chunk_ids = [c.id for c in db.query(Chunk).filter(Chunk.entry_id == entry_id).all()]
-    for cid in chunk_ids:
-        try:
-            db.execute(text("DELETE FROM chunks_vec WHERE rowid = :id"), {"id": cid})
-        except Exception:
-            pass
+    from app.search.meilisearch_client import delete_entry_from_meili
+    delete_entry_from_meili(entry_id)
 
 
 def _get_setting(db: Session, key: str, default):
@@ -102,6 +86,7 @@ def _to_dict(entry: Entry, related: list | None = None) -> dict:
         "id": entry.id,
         "entry_type": entry.entry_type,
         "title": entry.title,
+        "display_title": entry.title or entry.question or "Ohne Titel",
         "question": entry.question,
         "answer": entry.answer,
         "content": entry.content,
@@ -146,45 +131,29 @@ def list_entries(
 
 @router.post("/check-duplicate")
 def check_duplicate(payload: DupeCheckRequest, db: Session = Depends(get_db)):
-    from app.embeddings.model import encode_query, to_bytes
-
-    text_to_check = f"{payload.question} {payload.answer}"
-    emb_bytes = to_bytes(encode_query(text_to_check))
-
     setting = db.query(Setting).filter(Setting.key == "dupe_threshold").first()
     threshold = json.loads(setting.value) if setting else DEFAULT_SETTINGS["dupe_threshold"]
 
-    try:
-        rows = db.execute(
-            text("SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH :emb ORDER BY distance LIMIT 20"),
-            {"emb": emb_bytes},
-        ).fetchall()
-    except Exception:
-        return []
-
-    if not rows:
-        return []
-
-    chunk_ids = [int(r[0]) for r in rows]
-    chunk_to_entry = {c.id: c.entry_id for c in db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all()}
-
-    seen: set[int] = set()
+    from app.search.meilisearch_client import search as ms_search
+    text_to_check = f"{payload.question} {payload.answer}"
+    
+    hits = ms_search(
+        query=text_to_check,
+        threshold=threshold,
+        top_k=5,
+        entry_type="qa",
+        hybrid=True
+    )
+    
     results = []
-    for rowid, distance in rows:
-        entry_id = chunk_to_entry.get(int(rowid))
-        if entry_id is None or entry_id in seen:
-            continue
-        cosine_sim = float(np.clip(1.0 - (distance ** 2) / 2.0, 0.0, 1.0))
-        if cosine_sim >= threshold:
-            entry = db.query(Entry).filter(Entry.id == entry_id).first()
-            if entry and entry.entry_type == "qa":
-                seen.add(entry_id)
-                results.append({
-                    "id": entry.id,
-                    "title": entry.title,
-                    "question": entry.question,
-                    "score": round(cosine_sim, 4),
-                })
+    for hit in hits:
+        results.append({
+            "id": hit["id"],
+            "title": hit["title"],
+            "question": hit["question"],
+            "answer": hit.get("answer", ""),
+            "score": hit["score"],
+        })
 
     return results
 
@@ -200,42 +169,25 @@ def get_entry(entry_id: int, db: Session = Depends(get_db)):
 
     related: list[dict] = []
     try:
-        first_chunk = db.query(Chunk).filter(Chunk.entry_id == entry_id).first()
-        if first_chunk:
-            vec_row = db.execute(
-                text("SELECT embedding FROM chunks_vec WHERE rowid = :id"), {"id": first_chunk.id}
-            ).fetchone()
-            if vec_row:
-                rows = db.execute(
-                    text("SELECT rowid, distance FROM chunks_vec WHERE embedding MATCH :emb ORDER BY distance LIMIT 25"),
-                    {"emb": vec_row[0]},
-                ).fetchall()
-                chunk_ids = [int(r[0]) for r in rows]
-                chunk_to_entry = {
-                    c.id: c.entry_id
-                    for c in db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all()
-                }
-                seen: set[int] = set()
-                rel_ids: list[int] = []
-                for chunk_id in chunk_ids:
-                    eid = chunk_to_entry.get(chunk_id)
-                    if eid and eid != entry_id and eid not in seen:
-                        seen.add(eid)
-                        rel_ids.append(eid)
-                    if len(rel_ids) >= 5:
-                        break
-                if rel_ids:
-                    rel_entries = db.query(Entry).filter(Entry.id.in_(rel_ids)).all()
-                    related = [
-                        {
-                            "id": e.id,
-                            "entry_type": e.entry_type,
-                            "title": e.title,
-                            "question": e.question,
-                            "tags": json.loads(e.tags or "[]"),
-                        }
-                        for e in rel_entries
-                    ]
+        from app.search.meilisearch_client import search as ms_search
+        query_text = entry.title or entry.question or entry.content or ""
+        if len(query_text) > 10:
+            hits = ms_search(
+                query=query_text,
+                threshold=0.2,
+                top_k=5,
+                hybrid=True
+            )
+            for hit in hits:
+                if hit["id"] != entry_id:
+                    related.append({
+                        "id": hit["id"],
+                        "entry_type": hit["entry_type"],
+                        "title": hit["title"],
+                        "display_title": hit.get("display_title"),
+                        "question": hit["question"],
+                        "tags": hit["tags"],
+                    })
     except Exception:
         pass
 
@@ -333,6 +285,5 @@ def delete_entry(entry_id: int, db: Session = Depends(get_db)):
     if not entry:
         raise HTTPException(404, "Entry not found")
     _delete_chunks_vec(db, entry_id)
-    db.execute(text("DELETE FROM entries_fts WHERE rowid = :id"), {"id": entry_id})
     db.delete(entry)
     db.commit()

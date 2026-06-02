@@ -68,6 +68,10 @@ export interface ApiStatus {
   model_ready: boolean
   llm_status: 'inactive' | 'error' | 'ready'
   llm_model: string
+  meilisearch_stats?: {
+    number_of_documents: number
+    is_indexing: boolean
+  } | null
 }
 
 export interface ImportItem {
