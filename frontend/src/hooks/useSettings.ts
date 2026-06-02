@@ -16,6 +16,7 @@ const DEFAULTS: AppSettings = {
   llm_url: 'https://api.openai.com/v1',
   llm_model: 'gpt-5-mini',
   llm_api_key: '',
+  agent_max_turns: 15,
 }
 
 export function useSettings() {

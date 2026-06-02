@@ -36,7 +36,7 @@ export interface SearchResult {
   score: number
   tags: string[]
   call_count: number
-  matched_by?: 'semantic' | 'bm25' | 'fuzzy'
+  matched_by?: 'semantic' | 'bm25' | 'fuzzy' | 'agent'
   matched_chunk_type?: 'question' | 'answer' | 'content' | 'title' | 'tag'
   matched_chunk_id?: number | null
 }

@@ -74,8 +74,8 @@ export function summarizeStream(
           try {
             const data = JSON.parse(line.slice(6))
             if (data.error) { onError(data.error); return }
-            if (data.token) onToken(data.token)
-            if (data.done) { onDone(); return }
+            if (data.type === 'message' && data.text) onToken(data.text)
+            if (data.type === 'done') { onDone(); return }
           } catch { /* malformed line */ }
         }
       }

@@ -10,8 +10,8 @@ from app.db.session import get_db
 from app.db.models import Setting, Entry
 from app.search.meilisearch_client import search as ms_search
 
-from agents import Agent, Runner, function_tool
-
+from agents import Agent, Runner, function_tool, OpenAIChatCompletionsModel
+from openai import AsyncOpenAI
 router = APIRouter(prefix="/api/ai/agent", tags=["agent"])
 
 def _setting(db: Session, key: str, default):
@@ -32,10 +32,14 @@ async def run_agent(req: AgentRequest, db: Session = Depends(get_db)):
     llm_model = _setting(db, "llm_model", "gpt-4o-mini")
     llm_url = _setting(db, "llm_url", "")
 
+    client_kwargs = {}
     if llm_api_key:
-        os.environ["OPENAI_API_KEY"] = llm_api_key
+        client_kwargs["api_key"] = llm_api_key
     if llm_url:
-        os.environ["OPENAI_BASE_URL"] = llm_url
+        client_kwargs["base_url"] = llm_url
+
+    client = AsyncOpenAI(**client_kwargs)
+    custom_model = OpenAIChatCompletionsModel(model=llm_model, openai_client=client)
 
     # Side-channel queue: tools push SearchResult objects here,
     # the SSE generator drains it between agent-sdk events.
@@ -131,7 +135,7 @@ async def run_agent(req: AgentRequest, db: Session = Depends(get_db)):
         name="SearchAgent",
         instructions=instruction,
         tools=[search_database, read_document, mark_source_as_relevant, report_failure],
-        model=llm_model
+        model=custom_model
     )
 
     # Build input with history for follow-up questions

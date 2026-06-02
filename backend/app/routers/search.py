@@ -106,8 +106,9 @@ def fuzzy_search(req: SearchRequest, db: Session = Depends(get_db)):
 
 @router.post("/summarize")
 async def summarize(req: SummarizeRequest, db: Session = Depends(get_db)):
-    import httpx
     from fastapi.responses import StreamingResponse
+    from agents import Agent, Runner, OpenAIChatCompletionsModel
+    from openai import AsyncOpenAI
 
     llm_url = _setting(db, "llm_url", "https://api.openai.com/v1").rstrip("/")
     llm_model = _setting(db, "llm_model", "gpt-5-mini")
@@ -135,48 +136,39 @@ async def summarize(req: SummarizeRequest, db: Session = Depends(get_db)):
             parts.append(f"### Quelle {i}: {e.title or ''}\n{context}")
 
     sources_block = "\n\n---\n\n".join(parts)
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "Beantworte Fragen in 2-4 Sätzen ausschließlich auf Basis der gegebenen Quellen. "
-                "Zitiere mit [#N] nur Quellen, die du tatsächlich verwendet hast. "
-                "Nicht relevante Quellen ignorierst du vollständig."
-            ),
-        },
-        {
-            "role": "user",
-            "content": f"Frage: {req.query}\n\n{sources_block}",
-        },
-    ]
+    
+    instruction = (
+        "Beantworte Fragen in 2-4 Sätzen ausschließlich auf Basis der gegebenen Quellen. "
+        "Zitiere mit [#N] nur Quellen, die du tatsächlich verwendet hast. "
+        "Nicht relevante Quellen ignorierst du vollständig."
+    )
+    
+    client_kwargs = {}
+    if llm_api_key:
+        client_kwargs["api_key"] = llm_api_key
+    if llm_url:
+        client_kwargs["base_url"] = llm_url
+
+    client = AsyncOpenAI(**client_kwargs)
+    custom_model = OpenAIChatCompletionsModel(model=llm_model, openai_client=client)
+
+    agent = Agent(
+        name="Summarizer",
+        instructions=instruction,
+        model=custom_model
+    )
+    
+    agent_input = f"Frage: {req.query}\n\n{sources_block}"
 
     async def generate():
         try:
-            headers = {"Authorization": f"Bearer {llm_api_key}"} if llm_api_key else {}
-            async with httpx.AsyncClient(timeout=None) as client:
-                async with client.stream(
-                    "POST",
-                    f"{llm_url}/chat/completions",
-                    headers=headers,
-                    json={"model": llm_model, "messages": messages, "stream": True},
-                ) as resp:
-                    if resp.status_code != 200:
-                        yield f"data: {json.dumps({'error': 'LLM-Dienst nicht erreichbar'})}\n\n"
-                        return
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        payload = line[5:].strip()
-                        if payload == "[DONE]":
-                            yield f"data: {json.dumps({'done': True})}\n\n"
-                            return
-                        try:
-                            chunk = json.loads(payload)
-                            token = chunk["choices"][0]["delta"].get("content", "")
-                            if token:
-                                yield f"data: {json.dumps({'token': token})}\n\n"
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            pass
+            stream = Runner.run_streamed(agent, input=agent_input)
+            async for event in stream.stream_events():
+                if hasattr(event, "data") and type(event.data).__name__ == "ResponseTextDeltaEvent":
+                    token = getattr(event.data, "delta", "")
+                    if token:
+                        yield f"data: {json.dumps({'type': 'message', 'text': token})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
