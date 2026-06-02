@@ -12,7 +12,6 @@ Self-hosted internal knowledge base with semantic search. Designed for teams tha
 - **Tag system** — filter by topic in search and browse, with content-based tag suggestions
 - **Branding** — configurable app name, accent color, font, logo, and custom CSS via env vars
 
-
 ## Quickstart
 
 **Requirements:** Docker and Docker Compose.
@@ -79,7 +78,6 @@ services:
       - LLM_API_KEY=sk-...
 ```
 
-
 ## Configuration
 
 All settings are configured via environment variables. Copy `.env.example` to `.env` and adjust as needed — every variable is optional and has a sensible default.
@@ -101,28 +99,33 @@ services:
 
 ### Key settings
 
-| Variable | Default | Description |
-|---|---|---|
-| `APP_NAME` | `Semnia` | Display name in topbar and browser tab. Last 3 chars are accented. |
-| `ACCENT_COLOR` | `#9933ee` | Primary color for buttons, links, and highlights. |
-| `FONT_STACK` | `Inter, system-ui, sans-serif` | CSS font-family stack applied to body and headings. |
-| `SEARCH_THRESHOLD` | `0.3` | Minimum relevance score to show a result (relative scale: 0% = noise, 100% = perfect match). |
-| `DUPE_THRESHOLD` | `0.9` | Similarity above which a new entry is flagged as a duplicate. |
-| `TOP_K` | `15` | Maximum results per search. |
-| `HYBRID_ALPHA` | `0.7` | Reserved; currently unused. |
-| `CHUNK_SIZE` | `200` | Max characters per chunk. Smaller = more precise retrieval. Changing triggers re-embedding. |
-| `CHUNK_OVERLAP` | `40` | Overlap between consecutive chunks in characters. |
-| `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | Embedding model for semantic search. Changing it triggers a full reindex on next startup. |
-| `SSL_VERIFY` | `true` | Set to `false` to disable HTTPS certificate verification for HuggingFace downloads. Use when your network has a corporate CA that Python does not trust. Not needed with the `-offline` image. |
-| `LLM_URL` | `http://ollama:11434/v1` | Base URL of any OpenAI-compatible API. Default points to the bundled Ollama container. |
-| `LLM_MODEL` | `llama3.2:1b` | Model name passed to the LLM API. |
-| `LLM_API_KEY` | _(empty)_ | API key for the LLM endpoint. Not required for local services (Ollama, LM Studio). |
-| `AGENT_MAX_TURNS` | `10` | Maximum number of turns/iterations the agent can use before aborting. |
-| `CUSTOM_CSS` | _(empty)_ | Inline CSS string injected into the frontend as a `<style>` tag. |
-| `CUSTOM_CSS_FILE` | _(empty)_ | Path to a mounted CSS file injected into the frontend. Takes precedence over `CUSTOM_CSS`. |
-| `BRANDING_LOGO_FILE` | _(empty)_ | Path to a mounted PNG/SVG logo file. |
-| `TZ` | `Europe/Berlin` | IANA timezone name (affects log timestamps). |
-| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000,...` | Comma-separated list of allowed CORS origins. |
+| Variable             | Default                                                       | Description                                                                                                                                                                                    |
+| -------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_NAME`           | `Semnia`                                                      | Display name in topbar and browser tab. Last 3 chars are accented.                                                                                                                             |
+| `ACCENT_COLOR`       | `#9933ee`                                                     | Primary color for buttons, links, and highlights.                                                                                                                                              |
+| `FONT_STACK`         | `Inter, system-ui, sans-serif`                                | CSS font-family stack applied to body and headings.                                                                                                                                            |
+| `SEARCH_THRESHOLD`   | `0.3`                                                         | Minimum relevance score to show a result (relative scale: 0% = noise, 100% = perfect match).                                                                                                   |
+| `DUPE_THRESHOLD`     | `0.9`                                                         | Similarity above which a new entry is flagged as a duplicate.                                                                                                                                  |
+| `TOP_K`              | `15`                                                          | Maximum results per search.                                                                                                                                                                    |
+| `CHUNK_SIZE`         | `200`                                                         | Max characters per chunk. Smaller = more precise retrieval. Changing triggers re-embedding.                                                                                                    |
+| `CHUNK_OVERLAP`      | `40`                                                          | Overlap between consecutive chunks in characters.                                                                                                                                              |
+| `EMBEDDING_MODEL`    | `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | Embedding model for semantic search. Changing it triggers a full reindex on next startup.                                                                                                      |
+| `SSL_VERIFY`         | `true`                                                        | Set to `false` to disable HTTPS certificate verification for HuggingFace downloads. Use when your network has a corporate CA that Python does not trust. Not needed with the `-offline` image. |
+| `LLM_URL`            | `http://ollama:11434/v1`                                      | Base URL of any OpenAI-compatible API. Default points to the bundled Ollama container.                                                                                                         |
+| `LLM_MODEL`          | `llama3.2:1b`                                                 | Model name passed to the LLM API.                                                                                                                                                              |
+| `LLM_API_KEY`        | _(empty)_                                                     | API key for the LLM endpoint. Not required for local services (Ollama, LM Studio).                                                                                                             |
+| `AGENT_MAX_TURNS`    | `15`                                                          | Maximum number of turns/iterations the agent can use before aborting.                                                                                                                          |
+| `CUSTOM_CSS`         | _(empty)_                                                     | Inline CSS string injected into the frontend as a `<style>` tag.                                                                                                                               |
+| `CUSTOM_CSS_FILE`    | _(empty)_                                                     | Path to a mounted CSS file injected into the frontend. Takes precedence over `CUSTOM_CSS`.                                                                                                     |
+| `BRANDING_LOGO_FILE` | _(empty)_                                                     | Path to a mounted PNG/SVG logo file.                                                                                                                                                           |
+| `DB_PATH`            | `/data/wissensdatenbank.sqlite`                               | Path to the SQLite database file inside the container.                                                                                                                                         |
+| `UPLOAD_PATH`        | `/data/uploads`                                               | Path to the uploaded files directory inside the container.                                                                                                                                     |
+| `EMBEDDING_DIM`      | _(auto)_                                                      | Override the embedding dimension (auto-detected by default).                                                                                                                                   |
+| `MEILISEARCH_URL`    | `http://localhost:7700`                                       | Base URL of the Meilisearch instance.                                                                                                                                                          |
+| `MEILISEARCH_KEY`    | _(empty)_                                                     | Master key for Meilisearch authentication.                                                                                                                                                     |
+| `TZ`                 | `Europe/Berlin`                                               | IANA timezone name (affects log timestamps).                                                                                                                                                   |
+| `CORS_ORIGINS`       | `http://localhost:5173,http://localhost:3000,...`             | Comma-separated list of allowed CORS origins.                                                                                                                                                  |
+| `DEMO`               | `false`                                                       | Enable demo mode to block destructive operations (delete, reset).                                                                                                                              |
 
 See [`.env.example`](./.env.example) for the full list with descriptions.
 
@@ -159,18 +162,16 @@ EMBEDDING_MODEL=intfloat/multilingual-e5-large
 
 Recommended multilingual models by size:
 
-| Model | Dim | Size | Notes |
-|---|---|---|---|
-| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 384 | ~120 MB | Fast, compact, ~50 languages. Good when resources are tight. |
-| `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | 768 | ~280 MB | **Default.** Good balance of quality and speed. ~50 languages. |
-| `intfloat/multilingual-e5-large` | 1024 | ~560 MB | Best quality, ~100 languages, needs ~1 GB RAM. |
-| `jinaai/jina-embeddings-v2-base-de` | 768 | ~280 MB | German + English optimised, up to 8192 tokens. |
-
+| Model                                                         | Dim  | Size    | Notes                                                          |
+| ------------------------------------------------------------- | ---- | ------- | -------------------------------------------------------------- |
+| `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | 384  | ~120 MB | Fast, compact, ~50 languages. Good when resources are tight.   |
+| `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` | 768  | ~280 MB | **Default.** Good balance of quality and speed. ~50 languages. |
+| `intfloat/multilingual-e5-large`                              | 1024 | ~560 MB | Best quality, ~100 languages, needs ~1 GB RAM.                 |
+| `jinaai/jina-embeddings-v2-base-de`                           | 768  | ~280 MB | German + English optimised, up to 8192 tokens.                 |
 
 ## Data
 
 All data is stored in a single SQLite file at `DB_PATH` (default `/data/wissensdatenbank.sqlite`). The Docker volume persists across restarts. To back up, copy that file.
-
 
 ## Development
 

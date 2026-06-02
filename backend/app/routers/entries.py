@@ -46,8 +46,10 @@ def _sync_fts(db: Session, entry: Entry) -> None:
 
 
 def _delete_chunks_vec(db: Session, entry_id: int) -> None:
-    from app.search.meilisearch_client import delete_entry_from_meili
-    delete_entry_from_meili(entry_id)
+    from app.search.meilisearch_client import delete_chunks_from_meili
+    chunk_ids = [c.id for c in db.query(Chunk.id).filter(Chunk.entry_id == entry_id).all()]
+    if chunk_ids:
+        delete_chunks_from_meili(chunk_ids)
 
 
 def _get_setting(db: Session, key: str, default):

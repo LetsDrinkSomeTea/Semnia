@@ -13,6 +13,10 @@ def enqueue_chunk(chunk_id: int) -> None:
     _queue.put_nowait(chunk_id)
 
 
+def get_queue_size() -> int:
+    return _queue.qsize()
+
+
 def enqueue_entry_chunks(entry_id: int) -> None:
     """Enqueue all chunks for an entry (call after creating/updating entry)."""
     db = SessionLocal()

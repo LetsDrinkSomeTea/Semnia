@@ -132,7 +132,7 @@ export default function AgenticSearch({ toast }: Props) {
             } else if (payload.type === 'done') {
               updateLastTurn(t => ({ ...t, done: true }))
             }
-          } catch {}
+          } catch { }
         }
       }
     } catch (err: any) {
@@ -236,7 +236,7 @@ export default function AgenticSearch({ toast }: Props) {
                       key={r.id}
                       result={r}
                       onClick={handleResultClick}
-                      onClickTag={() => {}}
+                      onClickTag={() => { }}
                     />
                   ))}
                 </div>
@@ -313,7 +313,7 @@ export default function AgenticSearch({ toast }: Props) {
                   const currentTurn = turns[turns.length - 1];
                   if (!currentTurn || currentTurn.steps.length === 0) return 'Agent überlegt...';
                   const lastStep = currentTurn.steps[currentTurn.steps.length - 1];
-                  
+
                   let args: any = {};
                   try {
                     if (lastStep.args) args = JSON.parse(lastStep.args);
@@ -325,15 +325,15 @@ export default function AgenticSearch({ toast }: Props) {
                       if (idMatch) args.entry_id = idMatch[1];
                     }
                   }
-                  
+
                   if (lastStep.tool === 'search_database') {
-                    return <>Durchsuche die Datenbank nach: <i>{args.query || '...'}</i>...</>;
+                    return <>Durchsuche die Datenbank nach: "<i>{args.query || '...'}</i>"</>;
                   } else if (lastStep.tool === 'read_document') {
-                    return <>Lese vollständiges Dokument <i>{lastStep.title || args.entry_id || ''}</i>...</>;
+                    return <>Lese vollständiges Dokument "<i>{lastStep.title || args.entry_id || ''}</i>"</>;
                   } else if (lastStep.tool === 'mark_source_as_relevant') {
-                    return <>Markiere Dokument <i>{lastStep.title || args.entry_id || ''}</i> als relevant...</>;
+                    return <>Markiere Dokument "<i>{lastStep.title || args.entry_id || ''}</i>" als relevant</>;
                   } else {
-                    return <>Führe Aktion aus: <i>{lastStep.tool}</i>...</>;
+                    return <>Führe Aktion aus: "<i>{lastStep.tool}</i>"</>;
                   }
                 })()}
               </span>

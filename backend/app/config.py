@@ -17,7 +17,6 @@ DEFAULT_SETTINGS: dict = {
     "search_threshold": 0.3,
     "dupe_threshold": 0.9,
     "top_k": 15,
-    "hybrid_alpha": 0.7,
     "chunk_size": 200,
     "chunk_overlap": 40,
     "branding_name": "Semnia",
@@ -28,7 +27,7 @@ DEFAULT_SETTINGS: dict = {
     "llm_url": "http://ollama:11434/v1",
     "llm_model": "llama3.2:1b",
     "llm_api_key": "",
-    "agent_max_turns": 10,
+    "agent_max_turns": 15,
 }
 
 
@@ -43,7 +42,6 @@ def _build_settings_overrides() -> dict:
     _float("SEARCH_THRESHOLD", "search_threshold")
     _float("DUPE_THRESHOLD",   "dupe_threshold")
     _int  ("TOP_K",            "top_k")
-    _float("HYBRID_ALPHA",     "hybrid_alpha")
     _int  ("CHUNK_SIZE",       "chunk_size")
     _int  ("CHUNK_OVERLAP",    "chunk_overlap")
     _str  ("APP_NAME",         "branding_name")

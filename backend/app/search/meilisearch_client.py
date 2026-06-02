@@ -73,13 +73,14 @@ def upsert_chunk(entry: Entry, chunk: Chunk, embedding: list[float]):
         logger.error(f"Meilisearch upsert failed for chunk {chunk.id}: {e}")
 
 
-def delete_entry_from_meili(entry_id: int):
+def delete_chunks_from_meili(chunk_ids: list[int]):
+    if not chunk_ids:
+        return
     try:
-        client.index(INDEX_NAME).delete_documents_by({
-            "filter": f"entry_id = {entry_id}"
-        })
+        doc_ids = [f"chunk_{cid}" for cid in chunk_ids]
+        client.index(INDEX_NAME).delete_documents(doc_ids)
     except Exception as e:
-        logger.error(f"Meilisearch delete failed for entry {entry_id}: {e}")
+        logger.error(f"Meilisearch delete failed for chunks {chunk_ids}: {e}")
 
 
 def search(

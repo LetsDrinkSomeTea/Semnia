@@ -27,9 +27,32 @@ export default function System(_props: Props) {
   const [statusError, setStatusError] = useState(false)
 
   useEffect(() => {
-    getStatus()
-      .then(s => { setStatus(s); setStatusError(false) })
-      .catch(() => setStatusError(true))
+    let evtSource: EventSource | null = null;
+
+    const setupSSE = () => {
+      // First fetch the initial state to immediately paint the UI without SSE delay
+      getStatus()
+        .then(s => {
+          setStatus(s)
+          setStatusError(false)
+          
+          evtSource = new EventSource('/api/status/stream')
+          evtSource.onmessage = (e) => {
+            try {
+              setStatus(JSON.parse(e.data))
+              setStatusError(false)
+            } catch (err) {}
+          }
+          evtSource.onerror = () => setStatusError(true)
+        })
+        .catch(() => setStatusError(true))
+    }
+
+    setupSSE()
+
+    return () => {
+      if (evtSource) evtSource.close()
+    }
   }, [])
 
   if (loading) return <main className="pb-main"><div className="empty"><p>Lädt…</p></div></main>
@@ -69,6 +92,28 @@ export default function System(_props: Props) {
 
   const configGroups = [
     {
+      label: 'System & Netzwerk',
+      rows: [
+        { label: 'Zeitzone', value: status?.tz ?? '—', env: 'TZ' },
+        { label: 'Datenbank-Pfad', value: status?.db_path_str ?? '—', env: 'DB_PATH' },
+        { label: 'Upload-Pfad', value: status?.upload_path ?? '—', env: 'UPLOAD_PATH' },
+        { label: 'Meilisearch URL', value: status?.meilisearch_url ?? '—', env: 'MEILISEARCH_URL' },
+        { label: 'CORS Origins', value: status?.cors_origins || 'Standard', env: 'CORS_ORIGINS' },
+        { label: 'HuggingFace SSL-Prüfung', value: status ? (status.ssl_verify ? 'Aktiv' : 'Deaktiviert (Proxy Workaround)') : '—', env: 'SSL_VERIFY' },
+        { label: 'Demo-Modus', value: status ? (status.demo ? 'Aktiv' : 'Inaktiv') : '—', env: 'DEMO' },
+      ],
+    },
+    {
+      label: 'Branding',
+      rows: [
+        { label: 'App Name', value: settings.branding_name || '—', env: 'APP_NAME' },
+        { label: 'Akzentfarbe', value: settings.branding_accent || '—', env: 'ACCENT_COLOR' },
+        { label: 'Schriftarten', value: settings.branding_font || '—', env: 'FONT_STACK' },
+        { label: 'Eigenes Logo', value: settings.branding_logo_b64 ? 'Gesetzt' : 'Nicht gesetzt', env: 'BRANDING_LOGO_FILE' },
+        { label: 'Custom CSS', value: settings.branding_custom_css ? 'Gesetzt' : 'Nicht gesetzt', env: 'CUSTOM_CSS / CUSTOM_CSS_FILE' },
+      ],
+    },
+    {
       label: 'Embedding',
       rows: [
         { label: 'Embedding-Modell', value: status?.model ?? '—', env: 'EMBEDDING_MODEL' },
@@ -90,11 +135,12 @@ export default function System(_props: Props) {
       ],
     },
     {
-      label: 'LLM',
+      label: 'LLM & Agent',
       rows: [
         { label: 'LLM URL', value: settings.llm_url || '—', env: 'LLM_URL' },
         { label: 'LLM Modell', value: settings.llm_model || '—', env: 'LLM_MODEL' },
         { label: 'API Key', value: settings.llm_api_key ? '••••••••' : '—', env: 'LLM_API_KEY' },
+        { label: 'Max Agent Turns', value: String(settings.agent_max_turns ?? '—'), env: 'AGENT_MAX_TURNS' },
       ],
     },
   ]

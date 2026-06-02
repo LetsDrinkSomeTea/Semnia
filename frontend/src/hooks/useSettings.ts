@@ -6,7 +6,6 @@ const DEFAULTS: AppSettings = {
   search_threshold: 0.4,
   dupe_threshold: 0.92,
   top_k: 10,
-  hybrid_alpha: 0.7,
   chunk_size: 1500,
   chunk_overlap: 200,
   branding_name: 'Semnia',

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE, TZ, SSL_VERIFY, UPLOAD_PATH
+from app.config import EMBEDDING_MODEL, EMBEDDING_DIM_OVERRIDE, TZ, SSL_VERIFY, UPLOAD_PATH, DEMO
 from app.db.init_db import init_db, insert_seed_data
 from app.db.session import get_db
 from app.embeddings.model import load_model
@@ -176,19 +176,17 @@ app.include_router(settings.router)
 app.include_router(agent.router)
 
 
-@app.get("/api/status")
-async def api_status(db: Session = Depends(get_db)):
+async def _fetch_status_data(db: Session, cached_llm_status: str | None = None) -> dict:
     import httpx
     from sqlalchemy import text
     from app.db.models import Entry, Chunk, Setting
     from app.embeddings.model import get_model
+    from app.embeddings.queue import get_queue_size
 
     entry_count = db.query(Entry).count()
     chunk_count = db.query(Chunk).count()
 
-    # Meilisearch stats
     meilisearch_stats = None
-    unembedded = 0
     try:
         from app.search.meilisearch_client import client, INDEX_NAME
         stats = client.index(INDEX_NAME).get_stats()
@@ -196,11 +194,11 @@ async def api_status(db: Session = Depends(get_db)):
             "number_of_documents": stats.number_of_documents,
             "is_indexing": stats.is_indexing
         }
-        unembedded = max(0, chunk_count - stats.number_of_documents)
     except Exception:
-        unembedded = chunk_count
+        pass
 
-    # DB file size
+    unembedded = get_queue_size()
+
     db_size_bytes = 0
     try:
         db_size_bytes = os.path.getsize(os.getenv("DB_PATH", "./data/wissensdatenbank.sqlite"))
@@ -216,16 +214,17 @@ async def api_status(db: Session = Depends(get_db)):
     llm_model_setting = db.query(Setting).filter(Setting.key == "llm_model").first()
     llm_model = json.loads(llm_model_setting.value) if llm_model_setting else ""
 
-    llm_status = "inactive"
-    try:
-        headers = {"Authorization": f"Bearer {llm_api_key}"} if llm_api_key else {}
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get(f"{llm_url}/models", headers=headers)
-            llm_status = "ready" if r.status_code == 200 else "error"
-    except (httpx.ConnectError, httpx.TimeoutException):
-        llm_status = "inactive"
-    except Exception:
-        llm_status = "error"
+    llm_status = cached_llm_status or "inactive"
+    if cached_llm_status is None:
+        try:
+            headers = {"Authorization": f"Bearer {llm_api_key}"} if llm_api_key else {}
+            async with httpx.AsyncClient(timeout=2.0) as client_http:
+                r = await client_http.get(f"{llm_url}/models", headers=headers)
+                llm_status = "ready" if r.status_code == 200 else "error"
+        except (httpx.ConnectError, httpx.TimeoutException):
+            llm_status = "inactive"
+        except Exception:
+            llm_status = "error"
 
     agent_max_turns_setting = db.query(Setting).filter(Setting.key == "agent_max_turns").first()
     agent_max_turns = json.loads(agent_max_turns_setting.value) if agent_max_turns_setting else 10
@@ -242,7 +241,50 @@ async def api_status(db: Session = Depends(get_db)):
         "llm_model": llm_model,
         "agent_max_turns": agent_max_turns,
         "meilisearch_stats": meilisearch_stats,
+        "tz": TZ,
+        "ssl_verify": SSL_VERIFY,
+        "demo": DEMO,
+        "upload_path": UPLOAD_PATH,
+        "db_path_str": os.getenv("DB_PATH", "/data/wissensdatenbank.sqlite"),
+        "meilisearch_url": os.getenv("MEILISEARCH_URL", "http://localhost:7700"),
+        "cors_origins": os.getenv("CORS_ORIGINS", ""),
     }
+
+
+@app.get("/api/status")
+async def api_status(db: Session = Depends(get_db)):
+    return await _fetch_status_data(db)
+
+
+@app.get("/api/status/stream")
+async def api_status_stream():
+    from fastapi.responses import StreamingResponse
+    from app.db.session import SessionLocal
+
+    async def event_generator():
+        counter = 0
+        cached_llm_status = None
+        while True:
+            db = SessionLocal()
+            try:
+                if counter % 10 == 0:
+                    cached_llm_status = None  # Force re-check
+                
+                data = await _fetch_status_data(db, cached_llm_status=cached_llm_status)
+                cached_llm_status = data["llm_status"]
+                
+                yield f"data: {json.dumps(data)}\n\n"
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logging.error(f"SSE status error: {e}")
+            finally:
+                db.close()
+                
+            counter += 1
+            await asyncio.sleep(2)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # ── Static frontend (only active when FRONTEND_DIR is set) ───────────────────

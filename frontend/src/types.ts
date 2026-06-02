@@ -50,7 +50,6 @@ export interface AppSettings {
   search_threshold: number
   dupe_threshold: number
   top_k: number
-  hybrid_alpha: number
   chunk_size: number
   chunk_overlap: number
   branding_name: string
@@ -61,6 +60,7 @@ export interface AppSettings {
   llm_url: string
   llm_model: string
   llm_api_key: string
+  agent_max_turns: number
 }
 
 export interface ApiStatus {
@@ -78,6 +78,13 @@ export interface ApiStatus {
     number_of_documents: number
     is_indexing: boolean
   } | null
+  tz: string
+  ssl_verify: boolean
+  demo: boolean
+  upload_path: string
+  db_path_str: string
+  meilisearch_url: string
+  cors_origins: string
 }
 
 export interface ImportItem {
