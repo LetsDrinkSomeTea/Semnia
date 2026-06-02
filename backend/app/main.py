@@ -16,7 +16,7 @@ from app.db.init_db import init_db, insert_seed_data
 from app.db.session import get_db
 from app.embeddings.model import load_model
 from app.embeddings.queue import embedding_worker
-from app.routers import entries, search, tags, import_, settings
+from app.routers import entries, search, tags, import_, settings, agent
 
 os.environ["TZ"] = TZ
 time.tzset()
@@ -173,6 +173,7 @@ app.include_router(search.router)
 app.include_router(tags.router)
 app.include_router(import_.router)
 app.include_router(settings.router)
+app.include_router(agent.router)
 
 
 @app.get("/api/status")
@@ -226,6 +227,9 @@ async def api_status(db: Session = Depends(get_db)):
     except Exception:
         llm_status = "error"
 
+    agent_max_turns_setting = db.query(Setting).filter(Setting.key == "agent_max_turns").first()
+    agent_max_turns = json.loads(agent_max_turns_setting.value) if agent_max_turns_setting else 10
+
     return {
         "entry_count": entry_count,
         "chunk_count": chunk_count,
@@ -236,6 +240,7 @@ async def api_status(db: Session = Depends(get_db)):
         "model_ready": get_model() is not None,
         "llm_status": llm_status,
         "llm_model": llm_model,
+        "agent_max_turns": agent_max_turns,
         "meilisearch_stats": meilisearch_stats,
     }
 

@@ -212,6 +212,7 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
 
   // Dropzone state
   const [over, setOver] = useState(false)
+  const [copiedFormat, setCopiedFormat] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
@@ -437,40 +438,140 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
   const replaceCount = rows.filter((r) => r.action === 'replace').length
   const dupeCount = rows.filter((r) => r.duplicates.length > 0).length
 
+  const TEMPLATES = {
+    csv: 'title,question,answer,tags\nImport FAQs,Welche Formate werden unterstützt?,"Aktuell unterstützen wir CSV, JSON und YAML.","import, hilfe"',
+    json: '[\n  {\n    "title": "Import FAQs",\n    "question": "Welche Formate werden unterstützt?",\n    "answer": "Aktuell unterstützen wir CSV, JSON und YAML.",\n    "tags": ["import", "hilfe"]\n  }\n]',
+    yaml: '- title: "Import FAQs"\n  question: "Welche Formate werden unterstützt?"\n  answer: |\n    Aktuell unterstützen wir CSV, JSON und YAML.\n  tags:\n    - import\n    - hilfe'
+  }
+
+  const downloadTemplate = (format: keyof typeof TEMPLATES, e: React.MouseEvent) => {
+    e.preventDefault()
+    const blob = new Blob([TEMPLATES[format]], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `template.${format}`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const copyTemplate = (format: keyof typeof TEMPLATES, e: React.MouseEvent) => {
+    e.preventDefault()
+    
+    const handleSuccess = () => {
+      setCopiedFormat(format)
+      setTimeout(() => setCopiedFormat(null), 2000)
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(TEMPLATES[format]).then(handleSuccess)
+    } else {
+      const textArea = document.createElement("textarea")
+      textArea.value = TEMPLATES[format]
+      textArea.style.position = "fixed"
+      textArea.style.left = "-999999px"
+      textArea.style.top = "-999999px"
+      document.body.appendChild(textArea)
+      textArea.focus()
+      textArea.select()
+      try {
+        document.execCommand('copy')
+        handleSuccess()
+      } catch (err) {
+        toast('Kopieren fehlgeschlagen', 'error')
+      }
+      document.body.removeChild(textArea)
+    }
+  }
+
   return (
     <>
       {/* Unified dropzone or CSV review */}
       {!csvMode ? (
-        <div
-          className={`import-drop ${over ? 'over' : ''}`}
-          onDragOver={(e) => { e.preventDefault(); setOver(true) }}
-          onDragLeave={() => setOver(false)}
-          onDrop={onDrop}
-        >
-          <div className="big-ic">+</div>
-          <h3>Dateien oder Ordner hierher ziehen</h3>
-          <p style={{ marginTop: '0.5rem', marginBottom: '0.5rem' }}>
-            oder <button className="btn btn--ghost btn--sm" onClick={() => fileInputRef.current?.click()}>Dateien</button>{' '}
-            <button className="btn btn--ghost btn--sm" onClick={() => folderInputRef.current?.click()}>Ordner</button> auswählen
-          </p>
-          <p style={{ fontSize: 11, opacity: 0.6 }}>CSV → FAQ-Einträge &nbsp;·&nbsp; PDF / DOCX / MD → Dokument</p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv,.md,.pdf,.docx,.doc"
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => e.target.files && handleFiles(e.target.files)}
-          />
-          <input
-            ref={folderInputRef}
-            type="file"
-            // @ts-ignore: webkitdirectory is a non-standard attribute but widely supported
-            webkitdirectory="true"
-            multiple
-            style={{ display: 'none' }}
-            onChange={(e) => e.target.files && handleFiles(e.target.files)}
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', width: '100%', maxWidth: 800, margin: '0 auto' }}>
+          <div
+            className={`import-drop ${over ? 'over' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setOver(true) }}
+            onDragLeave={() => setOver(false)}
+            onDrop={onDrop}
+          >
+            <div className="big-ic">+</div>
+            <h3>Dateien oder Ordner hierher ziehen</h3>
+            <p style={{ marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+              oder <button className="btn btn--ghost btn--sm" onClick={() => fileInputRef.current?.click()}>Dateien</button>{' '}
+              <button className="btn btn--ghost btn--sm" onClick={() => folderInputRef.current?.click()}>Ordner</button> auswählen
+            </p>
+            <p style={{ fontSize: 11, opacity: 0.6 }}>CSV / JSON / YAML → FAQ-Einträge &nbsp;·&nbsp; PDF / DOCX / MD → Dokument</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.json,.yaml,.yml,.md,.pdf,.docx,.doc"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => e.target.files && handleFiles(e.target.files)}
+            />
+            <input
+              ref={folderInputRef}
+              type="file"
+              // @ts-ignore: webkitdirectory is a non-standard attribute but widely supported
+              webkitdirectory="true"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => e.target.files && handleFiles(e.target.files)}
+            />
+          </div>
+
+          <details className="import-templates-accordion" style={{ padding: '1rem', border: '1px solid var(--c-border)', borderRadius: 8, textAlign: 'left' }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, userSelect: 'none' }}>Format-Beispiele für FAQ-Import anzeigen</summary>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginTop: '1rem' }}>
+              
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h4 style={{ margin: 0 }}>JSON (Empfohlen)</h4>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn btn--ghost btn--sm" style={{ width: 95, height: 26, padding: 0 }} onClick={(e) => copyTemplate('json', e)}>
+                      {copiedFormat === 'json' ? '✓ Kopiert' : 'Kopieren'}
+                    </button>
+                    <button className="btn btn--ghost btn--sm" onClick={(e) => downloadTemplate('json', e)}>Herunterladen</button>
+                  </div>
+                </div>
+                <pre style={{ margin: 0, padding: '1rem', background: 'var(--c-bg-subtle)', borderRadius: 4, overflowX: 'auto', fontSize: 13, fontFamily: 'monospace' }}>
+                  <code>{TEMPLATES.json}</code>
+                </pre>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h4 style={{ margin: 0 }}>YAML</h4>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn btn--ghost btn--sm" style={{ width: 95, height: 26, padding: 0 }} onClick={(e) => copyTemplate('yaml', e)}>
+                      {copiedFormat === 'yaml' ? '✓ Kopiert' : 'Kopieren'}
+                    </button>
+                    <button className="btn btn--ghost btn--sm" onClick={(e) => downloadTemplate('yaml', e)}>Herunterladen</button>
+                  </div>
+                </div>
+                <pre style={{ margin: 0, padding: '1rem', background: 'var(--c-bg-subtle)', borderRadius: 4, overflowX: 'auto', fontSize: 13, fontFamily: 'monospace' }}>
+                  <code>{TEMPLATES.yaml}</code>
+                </pre>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <h4 style={{ margin: 0 }}>CSV</h4>
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn btn--ghost btn--sm" style={{ width: 95, height: 26, padding: 0 }} onClick={(e) => copyTemplate('csv', e)}>
+                      {copiedFormat === 'csv' ? '✓ Kopiert' : 'Kopieren'}
+                    </button>
+                    <button className="btn btn--ghost btn--sm" onClick={(e) => downloadTemplate('csv', e)}>Herunterladen</button>
+                  </div>
+                </div>
+                <pre style={{ margin: 0, padding: '1rem', background: 'var(--c-bg-subtle)', borderRadius: 4, overflowX: 'auto', fontSize: 13, fontFamily: 'monospace' }}>
+                  <code>{TEMPLATES.csv}</code>
+                </pre>
+              </div>
+
+            </div>
+          </details>
         </div>
       ) : (
         <div className="qa-review">

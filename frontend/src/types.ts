@@ -31,6 +31,7 @@ export interface SearchResult {
   question?: string | null
   answer?: string | null
   snippet: string
+  reasoning?: string
   highlight_spans: number[][]
   score: number
   tags: string[]
@@ -72,6 +73,7 @@ export interface ApiStatus {
   model_ready: boolean
   llm_status: 'inactive' | 'error' | 'ready'
   llm_model: string
+  agent_max_turns: number
   meilisearch_stats?: {
     number_of_documents: number
     is_indexing: boolean

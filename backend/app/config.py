@@ -28,6 +28,7 @@ DEFAULT_SETTINGS: dict = {
     "llm_url": "http://ollama:11434/v1",
     "llm_model": "llama3.2:1b",
     "llm_api_key": "",
+    "agent_max_turns": 10,
 }
 
 
@@ -51,6 +52,7 @@ def _build_settings_overrides() -> dict:
     _str  ("LLM_URL",           "llm_url")
     _str  ("LLM_MODEL",        "llm_model")
     _str  ("LLM_API_KEY",      "llm_api_key")
+    _int  ("AGENT_MAX_TURNS",  "agent_max_turns")
 
     # Custom CSS — inline string or file path
     if css := os.getenv("CUSTOM_CSS"):

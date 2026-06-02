@@ -211,11 +211,12 @@ def _process_qa_row(
 
 
 @router.post("/qa/parse")
-async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """Stream Q&A CSV rows one by one as they are processed (SSE)."""
+async def parse_qa_bulk(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Stream Q&A CSV/JSON/YAML rows one by one as they are processed (SSE)."""
     import asyncio
     import csv
     import io
+    import yaml
     from fastapi.responses import StreamingResponse
     from app.db.models import Setting
 
@@ -225,20 +226,54 @@ async def parse_qa_csv(file: UploadFile = File(...), db: Session = Depends(get_d
     except UnicodeDecodeError:
         text_content = raw.decode("latin-1")
 
-    reader = csv.DictReader(io.StringIO(text_content))
-    if reader.fieldnames is None or "question" not in reader.fieldnames:
-        raise HTTPException(400, "CSV muss eine 'question'-Spalte haben")
+    filename = file.filename.lower() if file.filename else ""
+    parsed_rows = []
 
-    csv_rows = [
-        {
-            "title": (r.get("title") or "").strip(),
-            "question": (r.get("question") or "").strip(),
-            "answer": (r.get("answer") or "").strip(),
-            "tags": [t.strip() for t in (r.get("tags") or "").split(",") if t.strip()],
-        }
-        for r in reader
-        if (r.get("question") or "").strip()
-    ]
+    if filename.endswith(".json"):
+        try:
+            data = json.loads(text_content)
+            if isinstance(data, list):
+                parsed_rows = data
+            elif isinstance(data, dict) and "items" in data:
+                parsed_rows = data["items"]
+        except Exception as e:
+            raise HTTPException(400, f"Fehler beim Parsen der JSON-Datei: {e}")
+    elif filename.endswith(".yaml") or filename.endswith(".yml"):
+        try:
+            data = yaml.safe_load(text_content)
+            if isinstance(data, list):
+                parsed_rows = data
+            elif isinstance(data, dict) and "items" in data:
+                parsed_rows = data["items"]
+        except Exception as e:
+            raise HTTPException(400, f"Fehler beim Parsen der YAML-Datei: {e}")
+    else:
+        # Fallback to CSV
+        reader = csv.DictReader(io.StringIO(text_content))
+        if reader.fieldnames is None or "question" not in reader.fieldnames:
+            raise HTTPException(400, "CSV muss eine 'question'-Spalte haben")
+        parsed_rows = list(reader)
+
+    csv_rows = []
+    for r in parsed_rows:
+        if not isinstance(r, dict):
+            continue
+        q = r.get("question") or ""
+        if isinstance(q, str) and q.strip():
+            tags_raw = r.get("tags") or ""
+            if isinstance(tags_raw, str):
+                tags_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            elif isinstance(tags_raw, list):
+                tags_list = [str(t).strip() for t in tags_raw if str(t).strip()]
+            else:
+                tags_list = []
+                
+            csv_rows.append({
+                "title": str(r.get("title") or "").strip(),
+                "question": q.strip(),
+                "answer": str(r.get("answer") or "").strip(),
+                "tags": tags_list,
+            })
 
     setting = db.query(Setting).filter(Setting.key == "dupe_threshold").first()
     dupe_threshold = json.loads(setting.value) if setting else DEFAULT_SETTINGS["dupe_threshold"]

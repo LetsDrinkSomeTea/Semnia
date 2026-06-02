@@ -117,6 +117,7 @@ services:
 | `LLM_URL` | `http://ollama:11434/v1` | Base URL of any OpenAI-compatible API. Default points to the bundled Ollama container. |
 | `LLM_MODEL` | `llama3.2:1b` | Model name passed to the LLM API. |
 | `LLM_API_KEY` | _(empty)_ | API key for the LLM endpoint. Not required for local services (Ollama, LM Studio). |
+| `AGENT_MAX_TURNS` | `10` | Maximum number of turns/iterations the agent can use before aborting. |
 | `CUSTOM_CSS` | _(empty)_ | Inline CSS string injected into the frontend as a `<style>` tag. |
 | `CUSTOM_CSS_FILE` | _(empty)_ | Path to a mounted CSS file injected into the frontend. Takes precedence over `CUSTOM_CSS`. |
 | `BRANDING_LOGO_FILE` | _(empty)_ | Path to a mounted PNG/SVG logo file. |

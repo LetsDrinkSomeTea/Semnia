@@ -2449,3 +2449,48 @@ input, textarea, select { font-family: var(--font-body); }
   justify-content: flex-end;
   gap: 10px;
 }
+
+/* ── Agent Steps Strip ───────────────────────────────────────────────────── */
+.agent-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+.agent-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--c-text-muted);
+  line-height: 1.4;
+}
+.agent-step-icon {
+  display: inline-flex;
+  width: 16px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.agent-step-icon.calling {
+  animation: spin 2s linear infinite;
+}
+.agent-step-icon.done {
+  color: var(--c-success);
+}
+.agent-step-name {
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  color: var(--c-text);
+}
+.agent-step-args {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.75rem;
+  color: var(--c-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+}

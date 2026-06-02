@@ -24,18 +24,25 @@ export function renderWithCitations(
     const nums = match[1]
       .split(/[,\s#]+/)
       .map(Number)
-      .filter((n) => n >= 1 && n <= sources.length)
+      .filter((n) => n >= 1)
+      
     if (!nums.length) return part
     return (
       <span key={i} className="llm-citations">
         {nums.map((n) => {
-          const src = sources[n - 1]
+          // If sources are provided, n is 1-indexed and maps to sources[n-1].id
+          // If sources is empty (Agentic mode), n is already the direct ID
+          const src = sources.length > 0 ? sources[n - 1] : undefined
+          const targetId = sources.length > 0 ? (src ? src.id : null) : n
+          
+          if (targetId === null) return null
+          
           return (
             <button
               key={n}
               className="llm-citation"
-              title={src?.display_title}
-              onClick={() => src && onCite(src.id)}
+              title={src?.display_title || `Dokument ${targetId}`}
+              onClick={() => onCite(targetId)}
             >
               {n}
             </button>
@@ -62,7 +69,7 @@ export function computeSpans(text: string, words: string[]): number[][] {
 }
 
 export function renderHighlighted(text: string, spans: number[][]): React.ReactNode {
-  if (!spans.length) return text
+  if (!spans || !spans.length) return text
   const parts: React.ReactNode[] = []
   let cursor = 0
   const sorted = [...spans].sort((a, b) => a[0] - b[0])

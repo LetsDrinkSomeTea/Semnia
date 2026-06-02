@@ -12,7 +12,7 @@ import { extractCitedNums, renderWithCitations } from '../utils/textFormatting'
 interface Props {
   toast: (msg: string, kind?: 'success' | 'error' | 'info') => void
   settings: AppSettings
-  ollamaReady: boolean
+  llmReady: boolean
 }
 
 type TypeFilter = '' | 'qa' | 'document'
@@ -20,7 +20,7 @@ type SortMode = 'updated' | 'calls'
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function Search({ toast, settings, ollamaReady }: Props) {
+export default function Search({ toast, settings, llmReady }: Props) {
   const navigate = useNavigate()
   const [query, setQuery] = useState(() => sessionStorage.getItem('wdb-q') || '')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('')
@@ -277,9 +277,14 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
                     </button>
                   </span>
                 )}
-                {ollamaReady && results.length > 0 && (
+                {llmReady && results.length > 0 && (
                   <button className="btn btn--ghost btn--sm" onClick={askLlm}>
                     {llmBusy ? '✕ Abbrechen' : '✦ KI-Zusammenfassung'}
+                  </button>
+                )}
+                {isSearchMode && llmReady && (
+                  <button className="btn btn--ghost btn--sm" onClick={() => navigate(`/agent?q=${encodeURIComponent(query)}`)}>
+                    ✦ Nicht zufrieden? KI fragen
                   </button>
                 )}
               </div>
