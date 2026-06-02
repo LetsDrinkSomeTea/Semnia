@@ -6,6 +6,7 @@ import EntryTypeBadge from '../components/EntryTypeBadge'
 import EntryRow from '../components/EntryRow'
 import TagInput from '../components/TagInput'
 import { useConfirm } from '../hooks/useConfirm'
+import { renderWithChunkHighlight } from '../utils/textFormatting'
 
 interface Props {
   toast: (msg: string, kind?: 'success' | 'error' | 'info') => void
@@ -16,31 +17,6 @@ interface HlCtx {
   matched_by?: string
   matched_chunk_type?: string
   snippet?: string
-}
-
-function findChunkRange(text: string, snippet: string): [number, number] | null {
-  const inner = snippet.replace(/^…/, '').replace(/…$/, '')
-  if (inner.length < 5) return null
-  const idx = text.indexOf(inner)
-  if (idx === -1) return null
-  return [idx, idx + inner.length]
-}
-
-function renderWithChunkHighlight(
-  text: string,
-  snippet: string,
-  firstMarkRef: React.MutableRefObject<Element | null>,
-): React.ReactNode {
-  const range = findChunkRange(text, snippet)
-  if (!range) return text
-  const [s, e] = range
-  return (
-    <>
-      {s > 0 && text.slice(0, s)}
-      <mark ref={(el) => { firstMarkRef.current = el }}>{text.slice(s, e)}</mark>
-      {e < text.length && text.slice(e)}
-    </>
-  )
 }
 
 export default function Detail({ toast }: Props) {

@@ -54,11 +54,7 @@ async def upload_file(
     first_line = text_content.strip().split("\n")[0].lstrip("#").strip()
     title = first_line if 10 < len(first_line) < 120 else filename.rsplit(".", 1)[0]
 
-    try:
-        tag_list: list[str] = json.loads(tags)
-    except Exception:
-        tag_list = []
-
+    tag_list = list(set([t.strip().lower() for t in (json.loads(tags) if tags else []) if t.strip()]))
     entry = Entry(
         entry_type="document",
         title=title,
@@ -126,7 +122,7 @@ def update_import_tags(entry_id: int, payload: _TagsPayload, db: Session = Depen
     entry = db.query(Entry).filter(Entry.id == entry_id, Entry.entry_type == "document").first()
     if not entry:
         raise HTTPException(404, "Dokument nicht gefunden")
-    tag_list: list[str] = payload.tags
+    tag_list = list(set([t.strip().lower() for t in payload.tags if t.strip()]))
     entry.tags = json.dumps(tag_list)
     db.query(EntryTag).filter(EntryTag.entry_id == entry_id).delete()
     for tag in tag_list:
@@ -299,10 +295,11 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
                 if item.title:
                     entry.title = item.title.strip()
                 entry.answer = item.answer
-                entry.tags = json.dumps(item.tags)
+                unique_tags = list(set([t.strip().lower() for t in item.tags if t.strip()]))
+                entry.tags = json.dumps(unique_tags)
                 entry.updated_at = _dt.datetime.now(_dt.timezone.utc)
                 db.query(EntryTag).filter(EntryTag.entry_id == entry.id).delete()
-                for tag in item.tags:
+                for tag in unique_tags:
                     db.add(EntryTag(entry_id=entry.id, tag=tag))
                 # Rebuild chunks so vector index stays in sync with updated answer
                 # Let queue handle Meilisearch sync
@@ -312,17 +309,18 @@ def confirm_qa_import(items: list[BulkQAAction], db: Session = Depends(get_db)):
 
         # action == "import"
         title = item.title.strip()
+        unique_tags = list(set([t.strip().lower() for t in item.tags if t.strip()]))
         entry = Entry(
             entry_type="qa",
             title=title,
             question=item.question,
             answer=item.answer,
-            tags=json.dumps(item.tags),
+            tags=json.dumps(unique_tags),
         )
         db.add(entry)
         db.flush()
 
-        for tag in item.tags:
+        for tag in unique_tags:
             db.add(EntryTag(entry_id=entry.id, tag=tag))
 
         _idx = 0

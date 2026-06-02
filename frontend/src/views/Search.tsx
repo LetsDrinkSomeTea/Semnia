@@ -5,6 +5,9 @@ import type { SearchResult, Tag, AppSettings, Entry } from '../types'
 import ScoreBar from '../components/ScoreBar'
 import EntryTypeBadge from '../components/EntryTypeBadge'
 import InfiniteScrollObserver from '../components/InfiniteScrollObserver'
+import BrowseEntryItem from '../components/BrowseEntryItem'
+import SearchResultItem from '../components/SearchResultItem'
+import { extractCitedNums, renderWithCitations } from '../utils/textFormatting'
 
 interface Props {
   toast: (msg: string, kind?: 'success' | 'error' | 'info') => void
@@ -14,95 +17,6 @@ interface Props {
 
 type TypeFilter = '' | 'qa' | 'document'
 type SortMode = 'updated' | 'calls'
-
-// ── Citation helpers ───────────────────────────────────────────────────────────
-
-function extractCitedNums(text: string): Set<number> {
-  const cited = new Set<number>()
-  for (const m of text.matchAll(/\[#?([\d,\s#]+)\]/g))
-    m[1].split(/[,\s#]+/).map(Number).filter(Boolean).forEach((n) => cited.add(n))
-  return cited
-}
-
-// ── Citation rendering ─────────────────────────────────────────────────────────
-
-function renderWithCitations(
-  text: string,
-  sources: SearchResult[],
-  onCite: (id: number) => void,
-): React.ReactNode[] {
-  const parts = text.split(/(\[#?\d+(?:[,\s#]*#?\d+)*\])/g)
-  return parts.map((part, i) => {
-    const match = part.match(/^\[#?([\d,\s#]+)\]$/)
-    if (!match) return part
-    const nums = match[1].split(/[,\s#]+/).map(Number).filter((n) => n >= 1 && n <= sources.length)
-    if (!nums.length) return part
-    return (
-      <span key={i} className="llm-citations">
-        {nums.map((n) => {
-          const src = sources[n - 1]
-          return (
-            <button key={n} className="llm-citation" title={src?.display_title} onClick={() => src && onCite(src.id)}>
-              {n}
-            </button>
-          )
-        })}
-      </span>
-    )
-  })
-}
-
-// ── Snippet rendering ──────────────────────────────────────────────────────────
-
-function computeSpans(text: string, words: string[]): number[][] {
-  const spans: number[][] = []
-  const low = text.toLowerCase()
-  for (const w of words) {
-    let pos = 0
-    while (true) {
-      const idx = low.indexOf(w, pos)
-      if (idx === -1) break
-      spans.push([idx, idx + w.length])
-      pos = idx + 1
-    }
-  }
-  return spans
-}
-
-function renderHighlighted(text: string, spans: number[][]): React.ReactNode {
-  if (!spans.length) return text
-  const parts: React.ReactNode[] = []
-  let cursor = 0
-  const sorted = [...spans].sort((a, b) => a[0] - b[0])
-  for (const [s, e] of sorted) {
-    if (s > cursor) parts.push(text.slice(cursor, s))
-    parts.push(<mark key={s}>{text.slice(s, e)}</mark>)
-    cursor = e
-  }
-  if (cursor < text.length) parts.push(text.slice(cursor))
-  return <>{parts}</>
-}
-
-function renderSnippet(snippet: string, spans: number[][]): React.ReactNode {
-  return renderHighlighted(snippet, spans)
-}
-
-// ── Field chip ─────────────────────────────────────────────────────────────────
-
-const FIELD_LABELS: Record<string, string> = {
-  question: 'Frage',
-  answer: 'Antwort',
-  title: 'Titel',
-  tag: 'Tag',
-  content: 'Inhalt',
-}
-
-function FieldChip({ chunk_type }: { chunk_type?: string }) {
-  if (!chunk_type) return null
-  const label = FIELD_LABELS[chunk_type]
-  if (!label) return null
-  return <span className={`field-chip field-chip--${chunk_type}`}>{label}</span>
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -413,27 +327,12 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
           ) : (
             <div className="results">
               {browseEntries.map((e) => (
-                <article key={e.id} className="result result--browse" onClick={() => navigate(`/entries/${e.id}`)} role="button">
-                  <div>
-                    <h3 className="q">{e.display_title}</h3>
-                    <div className="meta-row">
-                      <div className="meta-system">
-                        <EntryTypeBadge type={e.entry_type} />
-                      </div>
-                      {e.tags.length > 0 && (
-                        <div className="meta-tags">
-                          {e.tags.map((t) => (
-                            <span className="chip" key={t} role="button"
-                              onClick={(ev) => { ev.stopPropagation(); setTagFilter(t) }}>
-                              {t}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="right-side"><span>{formatMeta(e)}</span></div>
-                </article>
+                <BrowseEntryItem
+                  key={e.id}
+                  entry={e}
+                  onClickTag={setTagFilter}
+                  formatMeta={formatMeta}
+                />
               ))}
               <InfiniteScrollObserver
                 hasMore={browseHasMore}
@@ -456,51 +355,14 @@ export default function Search({ toast, settings, ollamaReady }: Props) {
             </div>
           ) : !loading && results.length > 0 ? (
             <div className="results">
-              {results.map((r) => {
-                const showContext = r.entry_type === 'qa'
-                  && r.question
-                  && r.matched_chunk_type !== 'question'
-                  && r.matched_chunk_type !== 'title'
-                return (
-                  <article key={r.id} className="result" onClick={() => handleResultClick(r)} role="button">
-                    <ScoreBar score={r.score} />
-                    <div>
-                    <h3 className="q">{r.display_title}</h3>
-                    {showContext && (
-                        <p className="result-context">
-                          {(r.question!.length > 100 ? r.question!.slice(0, 100) + '…' : r.question)}
-                        </p>
-                      )}
-                      {r.snippet && (
-                        <p className="snippet">
-                          {renderSnippet(r.snippet, r.highlight_spans)}
-                        </p>
-                      )}
-                      <div className="meta-row">
-                        <div className="meta-system">
-                          <EntryTypeBadge type={r.entry_type} />
-                          <FieldChip chunk_type={r.matched_chunk_type} />
-                        </div>
-                        {r.tags.length > 0 && (
-                          <div className="meta-tags">
-                            {r.tags.map((t) => (
-                              <span
-                                className="chip"
-                                key={t}
-                                role="button"
-                                onClick={(e) => { e.stopPropagation(); setTagFilter(t) }}
-                              >
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="right-side"><span>{r.call_count}×</span></div>
-                  </article>
-                )
-              })}
+              {results.map((r) => (
+                <SearchResultItem
+                  key={r.id}
+                  result={r}
+                  onClick={handleResultClick}
+                  onClickTag={setTagFilter}
+                />
+              ))}
               <InfiniteScrollObserver
                 hasMore={hasMore}
                 loading={loadingMore}

@@ -152,13 +152,20 @@ export const uploadFile = async (file: File): Promise<{ entry_id: number; title:
 export const listImports = (page = 1) =>
   req<PaginatedResponse<ImportItem>>(`/import?page=${page}`)
 
+export interface QADuplicate {
+  id: number
+  question: string
+  answer: string
+  score: number
+}
+
 export interface QABulkRow {
   title: string
   question: string
   answer: string
   tags: string[]
   suggested_tags: string[]
-  duplicates: { id: number; question: string; answer: string; score: number }[]
+  duplicates: QADuplicate[]
 }
 
 export interface QABulkRowEvent extends QABulkRow {

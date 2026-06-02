@@ -1,7 +1,8 @@
 export interface Entry {
   id: number
   entry_type: 'qa' | 'document'
-  title: string
+  title: string | null
+  display_title: string
   question: string | null
   answer: string | null
   content: string | null
@@ -16,7 +17,8 @@ export interface Entry {
 export interface RelatedEntry {
   id: number
   entry_type: 'qa' | 'document'
-  title: string
+  title: string | null
+  display_title: string
   question?: string | null
   tags: string[]
 }
@@ -25,7 +27,9 @@ export interface SearchResult {
   id: number
   entry_type: 'qa' | 'document'
   title: string
+  display_title: string
   question?: string | null
+  answer?: string | null
   snippet: string
   highlight_spans: number[][]
   score: number

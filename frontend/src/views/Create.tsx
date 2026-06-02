@@ -9,6 +9,7 @@ import type { QABulkRow, QABulkRowEvent, QABulkAction } from '../api/client'
 import type { AppSettings, DupeCandidate, Entry } from '../types'
 import TagInput from '../components/TagInput'
 import DupeWarning from '../components/DupeWarning'
+import QABulkImportDetail from '../components/QABulkImportDetail'
 import { useDebounce } from '../hooks/useDebounce'
 
 interface Props {
@@ -27,7 +28,7 @@ interface UploadState {
   created_at: string | null
 }
 
-interface ReviewRow extends QABulkRow {
+export interface ReviewRow extends QABulkRow {
   action: 'import' | 'skip' | 'replace'
   replace_id?: number
   expanded: boolean
@@ -206,11 +207,13 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
   const [parseComplete, setParseComplete] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const [rows, setRows] = useState<ReviewRow[]>([])
+  const [selectedRowIndex, setSelectedRowIndex] = useState(0)
   const abortRef = useRef<AbortController | null>(null)
 
   // Dropzone state
   const [over, setOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     listTags().then(({ tags }) => setAllTags(tags.map((t) => t.name))).catch(() => {})
@@ -256,26 +259,28 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
   }, [uploads])
 
   const handleDocFile = async (file: File) => {
+    // Falls der Pfad vorhanden ist (z.B. aus Ordner-Upload), zeigen wir ihn an.
+    const displayPath = (file as any).webkitRelativePath || file.name
     const state: UploadState = {
-      file: file.name, entry_id: null, chunk_count: 0, embedded_count: 0,
+      file: displayPath, entry_id: null, chunk_count: 0, embedded_count: 0,
       done: false, error: null, tags: [], created_at: new Date().toISOString(),
     }
     setUploads((prev) => [...prev, state])
     try {
       const result = await uploadFile(file)
       setUploads((prev) =>
-        prev.map((u) => u.file === file.name && u.entry_id === null
+        prev.map((u) => u.file === displayPath && u.entry_id === null
           ? { ...u, entry_id: result.entry_id, chunk_count: result.chunk_count }
           : u)
       )
       toast(`"${result.title}" importiert (${result.chunk_count} Abschnitte)`, 'success')
     } catch (e) {
       setUploads((prev) =>
-        prev.map((u) => u.file === file.name && u.entry_id === null
+        prev.map((u) => u.file === displayPath && u.entry_id === null
           ? { ...u, done: true, error: (e as Error).message }
           : u)
       )
-      toast(`Fehler: ${(e as Error).message}`, 'error')
+      toast(`Fehler bei ${file.name}: ${(e as Error).message}`, 'error')
     }
   }
 
@@ -300,7 +305,7 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
       )
     })
 
-  const handleFiles = async (files: FileList) => {
+  const handleFiles = async (files: File[] | FileList) => {
     const fileArray = Array.from(files)
     const csvFiles = fileArray.filter((f) => f.name.split('.').pop()?.toLowerCase() === 'csv')
     const docFiles = fileArray.filter((f) => ['md', 'pdf', 'docx', 'doc'].includes(f.name.split('.').pop()?.toLowerCase() ?? ''))
@@ -332,9 +337,47 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
     }
   }
 
-  const onDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setOver(false)
-    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files)
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    setOver(false)
+    const items = e.dataTransfer.items
+    const allFiles: File[] = []
+
+    const readEntry = async (entry: any) => {
+      if (entry.isFile) {
+        const file = await new Promise<File>((resolve) => entry.file(resolve))
+        allFiles.push(file)
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader()
+        const entries = await new Promise<any[]>((resolve) => {
+          reader.readEntries(resolve)
+        })
+        for (const child of entries) {
+          await readEntry(child)
+        }
+      }
+    }
+
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.webkitGetAsEntry) {
+          const entry = item.webkitGetAsEntry()
+          if (entry) await readEntry(entry)
+        } else if (item.kind === 'file') {
+          const file = item.getAsFile()
+          if (file) allFiles.push(file)
+        }
+      }
+    } else if (e.dataTransfer.files) {
+      for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        allFiles.push(e.dataTransfer.files[i])
+      }
+    }
+
+    if (allFiles.length > 0) {
+      handleFiles(allFiles)
+    }
   }
 
   const handleTagChange = async (entry_id: number, newTags: string[]) => {
@@ -344,7 +387,7 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
 
   const resetCsv = () => {
     abortRef.current?.abort(); abortRef.current = null
-    setRows([]); setCsvParsing(false); setParseComplete(false); setCsvMode(false)
+    setRows([]); setSelectedRowIndex(0); setCsvParsing(false); setParseComplete(false); setCsvMode(false)
   }
 
   const setAction = (i: number, action: ReviewRow['action'], replaceId?: number) =>
@@ -370,8 +413,6 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
     }))
   }
 
-  const bulkAllNew = () => setRows((prev) => prev.map((r) => r.duplicates.length === 0 ? { ...r, action: 'import' } : r))
-  const bulkSkipDupes = () => setRows((prev) => prev.map((r) => r.duplicates.length > 0 ? { ...r, action: 'skip' } : r))
 
   const handleConfirm = async () => {
     if (!parseComplete || rows.length === 0) return
@@ -405,15 +446,27 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
           onDragOver={(e) => { e.preventDefault(); setOver(true) }}
           onDragLeave={() => setOver(false)}
           onDrop={onDrop}
-          onClick={() => fileInputRef.current?.click()}
         >
           <div className="big-ic">+</div>
-          <h3>Datei hierher ziehen</h3>
-          <p>CSV → FAQ-Einträge &nbsp;·&nbsp; PDF / DOCX / MD → Dokument</p>
+          <h3>Dateien oder Ordner hierher ziehen</h3>
+          <p style={{ marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+            oder <button className="btn btn--ghost btn--sm" onClick={() => fileInputRef.current?.click()}>Dateien</button>{' '}
+            <button className="btn btn--ghost btn--sm" onClick={() => folderInputRef.current?.click()}>Ordner</button> auswählen
+          </p>
+          <p style={{ fontSize: 11, opacity: 0.6 }}>CSV → FAQ-Einträge &nbsp;·&nbsp; PDF / DOCX / MD → Dokument</p>
           <input
             ref={fileInputRef}
             type="file"
             accept=".csv,.md,.pdf,.docx,.doc"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => e.target.files && handleFiles(e.target.files)}
+          />
+          <input
+            ref={folderInputRef}
+            type="file"
+            // @ts-ignore: webkitdirectory is a non-standard attribute but widely supported
+            webkitdirectory="true"
             multiple
             style={{ display: 'none' }}
             onChange={(e) => e.target.files && handleFiles(e.target.files)}
@@ -436,99 +489,46 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
               {skipCount > 0 && <span className="qa-stat-skip">{skipCount} überspringen</span>}
             </div>
             <div className="qa-review-actions">
-              {parseComplete && (
-                <>
-                  <button className="btn btn--ghost btn--sm" onClick={bulkAllNew}>Alle Neuen importieren</button>
-                  {dupeCount > 0 && <button className="btn btn--ghost btn--sm" onClick={bulkSkipDupes}>Duplikate überspringen</button>}
-                </>
-              )}
-              <button className="btn btn--ghost btn--sm" onClick={resetCsv}>Neue Datei</button>
+              <button className="btn btn--ghost btn--sm" onClick={resetCsv}>Abbrechen</button>
               <button className="btn btn--primary btn--sm" onClick={handleConfirm} disabled={!parseComplete || confirming || rows.length === 0}>
                 {confirming ? 'Importiere…' : 'Bestätigen'}
               </button>
             </div>
           </div>
 
-          <div className="qa-review-table">
-            <div className="qa-review-thead">
-              <span>Frage</span><span>Antwort</span><span>Tags</span><span>Status</span>
-            </div>
-
-            {rows.map((row, i) => (
-              <div key={i} className={`qa-review-row ${row.duplicates.length > 0 ? 'has-dupe' : ''} ${row.action === 'skip' ? 'is-skip' : ''}`}>
-                <div className="qa-review-main">
-                  <div className="qa-review-q">
-                    <input
-                      className="qa-review-title-input"
-                      placeholder="Titel (leer = Frage als Fallback)"
-                      value={row.title}
-                      onChange={(e) => setRowTitle(i, e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    <div className="qa-review-q-text">{row.question}</div>
-                  </div>
-                  <div className="qa-review-a">{row.answer.length > 200 ? row.answer.slice(0, 200) + '…' : row.answer}</div>
-                  <div className="qa-review-tags">
-                    <TagInput tags={row.tags} onChange={(tags) => setRowTags(i, tags)} suggestedTags={row.suggested_tags} />
-                  </div>
-                  <div className="qa-review-status">
-                    {row.duplicates.length > 0 ? (
-                      <button className="qa-dupe-badge" onClick={() => setExpanded(i, !row.expanded)} title="Duplikate anzeigen">
-                        ⚠ {row.duplicates.length} Duplikat{row.duplicates.length > 1 ? 'e' : ''}
-                        <span className="qa-dupe-toggle">{row.expanded ? '▲' : '▼'}</span>
-                      </button>
-                    ) : (
-                      <span className="qa-new-badge">Neu</span>
-                    )}
+          <div className="qa-split-layout">
+            <div className="qa-split-sidebar">
+              {rows.map((row, i) => (
+                <div 
+                  key={i}
+                  className={`qa-split-item ${i === selectedRowIndex ? 'active' : ''} ${row.action === 'skip' ? 'skipped' : ''} ${row.duplicates.length > 0 ? 'conflict' : 'new'}`}
+                  onClick={() => {
+                    setSelectedRowIndex(i)
+                    if (row.duplicates.length > 0 && row.dupeEntry === undefined && !row.dupeLoading) {
+                      setExpanded(i, true)
+                    }
+                  }}
+                >
+                  <div className="qa-split-item-q">{row.question || 'Leere Frage'}</div>
+                  <div className="qa-split-item-status">
+                    {row.action === 'skip' ? 'Übersprungen' : row.action === 'replace' ? 'Ersetzen' : row.duplicates.length > 0 ? `${row.duplicates.length} Konflikte` : 'Neu'}
                   </div>
                 </div>
-
-                {row.duplicates.length > 0 && row.expanded && (
-                  <div className="qa-dupe-panel">
-                    <div className="qa-dupe-action-row">
-                      <label className={row.action === 'import' ? 'active' : ''}>
-                        <input type="radio" name={`action-${i}`} value="import" checked={row.action === 'import'} onChange={() => setAction(i, 'import')} />
-                        Trotzdem importieren
-                      </label>
-                      <label className={row.action === 'skip' ? 'active' : ''}>
-                        <input type="radio" name={`action-${i}`} value="skip" checked={row.action === 'skip'} onChange={() => setAction(i, 'skip')} />
-                        Überspringen
-                      </label>
-                      <label className={row.action === 'replace' ? 'active' : ''}>
-                        <input type="radio" name={`action-${i}`} value="replace" checked={row.action === 'replace'} onChange={() => setAction(i, 'replace', row.duplicates[0]?.id)} />
-                        Bestehenden ersetzen
-                      </label>
-                    </div>
-
-                    {row.duplicates.map((dupe, di) => (
-                      <div key={dupe.id}
-                        className={`qa-dupe-entry ${row.action === 'replace' && row.replace_id === dupe.id ? 'selected' : ''}`}
-                        onClick={() => row.action === 'replace' && setAction(i, 'replace', dupe.id)}
-                      >
-                        <div className="qa-dupe-score">{Math.round(dupe.score * 100)}%</div>
-                        <div className="qa-dupe-content">
-                          {di === 0 && row.dupeLoading && (
-                            <div className="qa-dupe-q" style={{ color: 'var(--primary--500)', fontStyle: 'italic' }}>Lädt…</div>
-                          )}
-                          {di === 0 && row.dupeEntry && (
-                            <>
-                              <div className="qa-dupe-q">{row.dupeEntry.question}</div>
-                              <div className="qa-dupe-a">{(row.dupeEntry.answer || '').slice(0, 300)}{(row.dupeEntry.answer || '').length > 300 ? '…' : ''}</div>
-                            </>
-                          )}
-                          {(di > 0 || (!row.dupeLoading && !row.dupeEntry)) && (
-                            <>
-                              <div className="qa-dupe-q">{dupe.question}</div>
-                              <div className="qa-dupe-a">{dupe.answer}</div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
+            
+            <div className="qa-split-detail">
+              {rows.length > 0 && rows[selectedRowIndex] && (
+                <QABulkImportDetail
+                  row={rows[selectedRowIndex] as any}
+                  index={selectedRowIndex}
+                  setRowTitle={setRowTitle}
+                  setTags={setRowTags}
+                  setExpanded={setExpanded}
+                  setAction={setAction}
+                />
+              )}
+            </div>
           </div>
         </div>
       )}
