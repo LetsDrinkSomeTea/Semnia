@@ -308,20 +308,20 @@ function UnifiedImportSection({ toast }: { toast: Props['toast'] }) {
 
   const handleFiles = async (files: File[] | FileList) => {
     const fileArray = Array.from(files)
-    const csvFiles = fileArray.filter((f) => f.name.split('.').pop()?.toLowerCase() === 'csv')
+    const qaFiles = fileArray.filter((f) => ['csv', 'json', 'yaml', 'yml'].includes(f.name.split('.').pop()?.toLowerCase() ?? ''))
     const docFiles = fileArray.filter((f) => ['md', 'pdf', 'docx', 'doc'].includes(f.name.split('.').pop()?.toLowerCase() ?? ''))
-    const unsupported = fileArray.filter((f) => !['csv', 'md', 'pdf', 'docx', 'doc'].includes(f.name.split('.').pop()?.toLowerCase() ?? ''))
+    const unsupported = fileArray.filter((f) => !['csv', 'json', 'yaml', 'yml', 'md', 'pdf', 'docx', 'doc'].includes(f.name.split('.').pop()?.toLowerCase() ?? ''))
 
     for (const f of unsupported) toast(`Format nicht unterstützt: .${f.name.split('.').pop()}`, 'error')
     for (const file of docFiles) handleDocFile(file)
 
-    if (csvFiles.length > 0) {
+    if (qaFiles.length > 0) {
       setCsvMode(true)
       setParseComplete(false)
       setCsvParsing(true)
       const ctrl = new AbortController()
       abortRef.current = ctrl
-      for (const file of csvFiles) {
+      for (const file of qaFiles) {
         if (ctrl.signal.aborted) break
         try {
           await parseCsvAsync(file, ctrl.signal)
