@@ -109,6 +109,8 @@ async def summarize(req: SummarizeRequest, db: Session = Depends(get_db)):
     from fastapi.responses import StreamingResponse
     from agents import Agent, Runner, OpenAIChatCompletionsModel
     from openai import AsyncOpenAI
+    import httpx
+    from app.config import SSL_VERIFY
 
     llm_url = _setting(db, "llm_url", "https://api.openai.com/v1").rstrip("/")
     llm_model = _setting(db, "llm_model", "gpt-5-mini")
@@ -149,7 +151,9 @@ async def summarize(req: SummarizeRequest, db: Session = Depends(get_db)):
     if llm_url:
         client_kwargs["base_url"] = llm_url
 
-    client = AsyncOpenAI(**client_kwargs)
+    # Pass verify=SSL_VERIFY so OpenAI calls work behind corporate proxies
+    http_client = httpx.AsyncClient(verify=SSL_VERIFY)
+    client = AsyncOpenAI(http_client=http_client, **client_kwargs)
     custom_model = OpenAIChatCompletionsModel(model=llm_model, openai_client=client)
 
     agent = Agent(

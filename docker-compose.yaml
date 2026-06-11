@@ -2,6 +2,7 @@ services:
   app:
     image: ghcr.io/letsdrinksometea/semnia:main
     container_name: semnia
+    env_file: .env
     build: .
     restart: unless-stopped
     ports:
@@ -38,7 +39,6 @@ services:
       - MEILI_MASTER_KEY=semnia_local_dev_key
     volumes:
       - meili_data:/meili_data
-
 
 volumes:
   data:

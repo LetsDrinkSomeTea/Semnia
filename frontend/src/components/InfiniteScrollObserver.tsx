@@ -1,38 +1,49 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef } from "react";
 
 interface Props {
-  onIntersect: () => void
-  hasMore: boolean
-  loading: boolean
+  onIntersect: () => void;
+  hasMore: boolean;
+  loading: boolean;
 }
 
-export default function InfiniteScrollObserver({ onIntersect, hasMore, loading }: Props) {
-  const ref = useRef<HTMLDivElement>(null)
+export default function InfiniteScrollObserver({
+  onIntersect,
+  hasMore,
+  loading,
+}: Props) {
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!hasMore || loading) return
+    if (!hasMore || loading) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting) {
-          onIntersect()
+          onIntersect();
         }
       },
-      { rootMargin: '200px' }
-    )
+      { rootMargin: "200px" },
+    );
 
     if (ref.current) {
-      observer.observe(ref.current)
+      observer.observe(ref.current);
     }
 
-    return () => observer.disconnect()
-  }, [hasMore, loading, onIntersect])
+    return () => observer.disconnect();
+  }, [hasMore, loading, onIntersect]);
 
-  if (!hasMore) return null
+  if (!hasMore) return null;
 
   return (
-    <div ref={ref} style={{ textAlign: 'center', margin: '2rem 0', opacity: 0.7 }}>
-      {loading ? <span className="loading-spinner">Lädt...</span> : 'Scrolle für mehr Ergebnisse...'}
+    <div
+      ref={ref}
+      style={{ textAlign: "center", margin: "2rem 0", opacity: 0.7 }}
+    >
+      {loading ? (
+        <span className="loading-spinner">Lädt...</span>
+      ) : (
+        "Scrolle für mehr Ergebnisse..."
+      )}
     </div>
-  )
+  );
 }

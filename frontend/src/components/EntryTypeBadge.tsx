@@ -1,11 +1,11 @@
 interface Props {
-  type: 'qa' | 'document'
+  type: "qa" | "document";
 }
 
 export default function EntryTypeBadge({ type }: Props) {
   return (
     <span className={`type-badge ${type}`}>
-      {type === 'qa' ? 'Q&A' : 'DOK'}
+      {type === "qa" ? "Q&A" : "DOK"}
     </span>
-  )
+  );
 }

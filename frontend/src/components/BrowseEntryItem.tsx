@@ -1,15 +1,19 @@
-import { useNavigate } from 'react-router-dom'
-import type { Entry } from '../types'
-import EntryTypeBadge from './EntryTypeBadge'
+import { useNavigate } from "react-router-dom";
+import type { Entry } from "../types";
+import EntryTypeBadge from "./EntryTypeBadge";
 
 interface Props {
-  entry: Entry
-  onClickTag: (tag: string) => void
-  formatMeta: (e: Entry) => string
+  entry: Entry;
+  onClickTag: (tag: string) => void;
+  formatMeta: (e: Entry) => string;
 }
 
-export default function BrowseEntryItem({ entry, onClickTag, formatMeta }: Props) {
-  const navigate = useNavigate()
+export default function BrowseEntryItem({
+  entry,
+  onClickTag,
+  formatMeta,
+}: Props) {
+  const navigate = useNavigate();
 
   return (
     <article
@@ -31,8 +35,8 @@ export default function BrowseEntryItem({ entry, onClickTag, formatMeta }: Props
                   key={t}
                   role="button"
                   onClick={(ev) => {
-                    ev.stopPropagation()
-                    onClickTag(t)
+                    ev.stopPropagation();
+                    onClickTag(t);
                   }}
                 >
                   {t}
@@ -46,5 +50,5 @@ export default function BrowseEntryItem({ entry, onClickTag, formatMeta }: Props
         <span>{formatMeta(entry)}</span>
       </div>
     </article>
-  )
+  );
 }

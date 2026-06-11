@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import meilisearch
-from app.config import MEILISEARCH_URL, MEILISEARCH_KEY
+from app.config import MEILISEARCH_URL, MEILISEARCH_KEY, SSL_VERIFY
 from app.db.models import Entry, Chunk
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,8 @@ def init_meilisearch(embedding_dim: int):
         httpx.patch(
             f"{MEILISEARCH_URL.rstrip('/')}/experimental-features",
             json={"vectorStore": True},
-            headers=headers
+            headers=headers,
+            verify=SSL_VERIFY,
         )
         
         index = client.index(INDEX_NAME)

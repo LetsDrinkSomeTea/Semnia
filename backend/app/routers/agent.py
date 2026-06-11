@@ -6,12 +6,15 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
+from app.config import SSL_VERIFY
 from app.db.session import get_db
 from app.db.models import Setting, Entry
 from app.search.meilisearch_client import search as ms_search
 
 from agents import Agent, Runner, function_tool, OpenAIChatCompletionsModel
 from openai import AsyncOpenAI
+import httpx
+
 router = APIRouter(prefix="/api/ai/agent", tags=["agent"])
 
 def _setting(db: Session, key: str, default):
@@ -38,7 +41,9 @@ async def run_agent(req: AgentRequest, db: Session = Depends(get_db)):
     if llm_url:
         client_kwargs["base_url"] = llm_url
 
-    client = AsyncOpenAI(**client_kwargs)
+    # Pass verify=SSL_VERIFY so OpenAI calls work behind corporate proxies
+    http_client = httpx.AsyncClient(verify=SSL_VERIFY)
+    client = AsyncOpenAI(http_client=http_client, **client_kwargs)
     custom_model = OpenAIChatCompletionsModel(model=llm_model, openai_client=client)
 
     # Side-channel queue: tools push SearchResult objects here,

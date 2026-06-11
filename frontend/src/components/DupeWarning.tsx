@@ -1,21 +1,25 @@
-import { useNavigate } from 'react-router-dom'
-import type { DupeCandidate } from '../types'
+import { useNavigate } from "react-router-dom";
+import type { DupeCandidate } from "../types";
 
 interface Props {
-  candidates: DupeCandidate[]
-  checking: boolean
-  hasContent: boolean
+  candidates: DupeCandidate[];
+  checking: boolean;
+  hasContent: boolean;
 }
 
-export default function DupeWarning({ candidates, checking, hasContent }: Props) {
-  const navigate = useNavigate()
+export default function DupeWarning({
+  candidates,
+  checking,
+  hasContent,
+}: Props) {
+  const navigate = useNavigate();
 
   if (checking) {
     return (
       <div className="dup-warn checking">
         <h5>⟳ Prüfe auf Duplikate…</h5>
       </div>
-    )
+    );
   }
 
   if (candidates.length > 0) {
@@ -23,7 +27,8 @@ export default function DupeWarning({ candidates, checking, hasContent }: Props)
       <div className="dup-warn">
         <h5>⚠ Ähnliche Einträge gefunden</h5>
         <p className="hint">
-          Diese Einträge haben einen hohen Ähnlichkeitswert. Du kannst trotzdem speichern.
+          Diese Einträge haben einen hohen Ähnlichkeitswert. Du kannst trotzdem
+          speichern.
         </p>
         {candidates.map((c) => (
           <div
@@ -32,12 +37,12 @@ export default function DupeWarning({ candidates, checking, hasContent }: Props)
             onClick={() => navigate(`/entries/${c.id}`)}
             role="button"
           >
-            <div className="q">{c.title || c.question || '—'}</div>
+            <div className="q">{c.title || c.question || "—"}</div>
             <div className="sim">Ähnlichkeit: {Math.round(c.score * 100)}%</div>
           </div>
         ))}
       </div>
-    )
+    );
   }
 
   if (hasContent) {
@@ -45,8 +50,8 @@ export default function DupeWarning({ candidates, checking, hasContent }: Props)
       <div className="dup-warn ok">
         <h5>✓ Keine Duplikate gefunden</h5>
       </div>
-    )
+    );
   }
 
-  return null
+  return null;
 }

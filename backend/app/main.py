@@ -45,6 +45,25 @@ if not SSL_VERIFY:
 
 logging.basicConfig(level=logging.INFO)
 
+# ── Agent SDK Tracing ────────────────────────────────────────────────────────
+# The OpenAI Agents SDK sends traces to the OpenAI platform via OPENAI_API_KEY.
+# 1. Explicit key via LLM_TRACES_OPENAI_KEY takes priority.
+# 2. Auto-detect: if LLM_URL points to OpenAI and LLM_API_KEY is set, reuse it.
+# 3. Otherwise: disable tracing (no valid key → would fail silently).
+_traces_key = os.getenv("LLM_TRACES_OPENAI_KEY", "")
+if not _traces_key:
+    _llm_url = os.getenv("LLM_URL", "")
+    _llm_key = os.getenv("LLM_API_KEY", "")
+    if "openai.com" in _llm_url and _llm_key:
+        _traces_key = _llm_key
+
+if _traces_key:
+    os.environ["OPENAI_API_KEY"] = _traces_key
+    logging.info("Agent tracing enabled (traces → OpenAI dashboard)")
+else:
+    os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1"
+    logging.info("Agent tracing disabled (no OpenAI key for traces)")
+
 os.makedirs(UPLOAD_PATH, exist_ok=True)
 
 
@@ -218,7 +237,7 @@ async def _fetch_status_data(db: Session, cached_llm_status: str | None = None) 
     if cached_llm_status is None:
         try:
             headers = {"Authorization": f"Bearer {llm_api_key}"} if llm_api_key else {}
-            async with httpx.AsyncClient(timeout=2.0) as client_http:
+            async with httpx.AsyncClient(timeout=2.0, verify=SSL_VERIFY) as client_http:
                 r = await client_http.get(f"{llm_url}/models", headers=headers)
                 llm_status = "ready" if r.status_code == 200 else "error"
         except (httpx.ConnectError, httpx.TimeoutException):

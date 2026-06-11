@@ -2,10 +2,10 @@ services:
   backend:
     build:
       context: .
-      target: backend        # skips the frontend Node stage
+      target: backend # skips the frontend Node stage
     restart: unless-stopped
     volumes:
-      - ./backend/app:/backend/app   # hot reload: mounts source over baked image
+      - ./backend/app:/backend/app # hot reload: mounts source over baked image
       - data-dev:/data
       - semnia-model-cache:/model-cache
     environment:
@@ -18,7 +18,13 @@ services:
       - "8000:8000"
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -29,7 +35,7 @@ services:
     working_dir: /app
     volumes:
       - ./frontend:/app
-      - frontend_nm:/app/node_modules  # named volume keeps node_modules across restarts
+      - frontend_nm:/app/node_modules # named volume keeps node_modules across restarts
     ports:
       - "5173:5173"
     environment:
@@ -44,7 +50,12 @@ services:
     restart: unless-stopped
     volumes:
       - ollama-dev:/root/.ollama
-    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 8 && ollama pull llama3.2:1b; wait"]
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "ollama serve & sleep 8 && ollama pull llama3.2:1b; wait",
+      ]
     profiles:
       - llm
 
@@ -55,7 +66,7 @@ services:
       - MEILI_NO_ANALYTICS=true
       - MEILI_MASTER_KEY=semnia_local_dev_key
     ports:
-      - "7700:7700"  # Expose in dev for easy debugging
+      - "7700:7700" # Expose in dev for easy debugging
     volumes:
       - meili_dev_data:/meili_data
 
